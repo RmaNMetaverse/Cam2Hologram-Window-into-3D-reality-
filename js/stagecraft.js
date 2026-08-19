@@ -1,6 +1,7 @@
 /**
- * The set dressing around the model: the depth box, the window frame and the
- * parallax reference props.
+ * The set dressing that sits in FRONT of the environment: the window frame and
+ * the parallax reference props. The environments themselves live in
+ * `environments.js`.
  *
  * These are not decoration. Head-coupled perspective only reads as depth if the
  * eye has something to compare against — a receding grid, a hard frame at the
@@ -27,131 +28,6 @@ export function disposeChildren(group) {
     }
   });
   group.clear();
-}
-
-/** Procedural grid texture — avoids shipping any image assets. */
-function gridTexture(size = 512, cells = 8, line = 'rgba(120,190,255,0.5)', bg = '#0a0e18') {
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  const ctx = c.getContext('2d');
-
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, size, size);
-
-  const step = size / cells;
-  ctx.strokeStyle = line;
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  for (let i = 0; i <= cells; i++) {
-    const p = Math.round(i * step) + 0.5;
-    ctx.moveTo(p, 0); ctx.lineTo(p, size);
-    ctx.moveTo(0, p); ctx.lineTo(size, p);
-  }
-  ctx.stroke();
-
-  // A brighter sub-grid adds high-frequency detail that parallax can act on.
-  ctx.strokeStyle = 'rgba(120,190,255,0.13)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let i = 0; i <= cells * 4; i++) {
-    const p = Math.round(i * step / 4) + 0.5;
-    ctx.moveTo(p, 0); ctx.lineTo(p, size);
-    ctx.moveTo(0, p); ctx.lineTo(size, p);
-  }
-  ctx.stroke();
-
-  const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 8;
-  return tex;
-}
-
-/**
- * A five-sided box open towards the viewer — a diorama sitting behind the glass.
- * Rebuilt whenever the window dimensions or depth change.
- */
-export class DepthBox extends THREE.Group {
-  constructor() {
-    super();
-    this.name = 'DepthBox';
-    this.texture = gridTexture();
-    this._built = null;
-
-    // The grid is emissive as well as lit. Faces that the key light never
-    // reaches — the ceiling especially — would otherwise fall to pure black and
-    // read as a hole in the box rather than a surface, which destroys the very
-    // depth cue the box exists to provide.
-    this.material = new THREE.MeshStandardMaterial({
-      map: this.texture,
-      emissiveMap: this.texture,
-      emissive: 0x243b57,
-      emissiveIntensity: 0.9,
-      color: 0x8fa8c8,
-      roughness: 0.92,
-      metalness: 0.03,
-      side: THREE.FrontSide,
-    });
-
-    // Rim light strips along the opening make the aperture read as a real edge.
-    // Kept dim: it sits exactly at the viewport border, so a saturated colour
-    // here reads as UI chrome rather than as part of the scene.
-    this.rimMaterial = new THREE.MeshBasicMaterial({ color: 0x1d5f7a, toneMapped: false });
-  }
-
-  /**
-   * @param {number} w window width, cm
-   * @param {number} h window height, cm
-   * @param {number} depth how far back the box extends, cm
-   */
-  build(w, h, depth) {
-    const key = `${w.toFixed(2)}|${h.toFixed(2)}|${depth.toFixed(2)}`;
-    if (this._built === key) return;
-    this._built = key;
-
-    disposeChildren(this);
-
-    const plane = new THREE.PlaneGeometry(1, 1);
-    const add = (sx, sy, pos, rot) => {
-      const m = new THREE.Mesh(plane, this.material.clone());
-      m.scale.set(sx, sy, 1);
-      m.position.copy(pos);
-      m.rotation.copy(rot);
-      m.receiveShadow = true;
-      // Repeat the grid at a fixed ~7 cm pitch so cell size is consistent on
-      // every face regardless of that face's dimensions.
-      const map = this.texture.clone();
-      map.needsUpdate = true;
-      map.repeat.set(sx / 7, sy / 7);
-      m.material.map = map;
-      m.material.emissiveMap = map;
-      this.add(m);
-      return m;
-    };
-
-    const E = new THREE.Euler();
-    const back  = add(w, h, new THREE.Vector3(0, 0, -depth), E.clone());
-    back.material.color.set(0xa9bdd8);
-
-    add(depth, h, new THREE.Vector3(-w / 2, 0, -depth / 2), new THREE.Euler(0,  Math.PI / 2, 0)); // left
-    add(depth, h, new THREE.Vector3( w / 2, 0, -depth / 2), new THREE.Euler(0, -Math.PI / 2, 0)); // right
-    add(w, depth, new THREE.Vector3(0, -h / 2, -depth / 2), new THREE.Euler(-Math.PI / 2, 0, 0)); // floor
-    add(w, depth, new THREE.Vector3(0,  h / 2, -depth / 2), new THREE.Euler( Math.PI / 2, 0, 0)); // ceiling
-
-    // Glowing rim around the aperture at z = 0.
-    const t = Math.max(w, h) * 0.006;
-    const strip = new THREE.BoxGeometry(1, 1, 1);
-    const rim = (sx, sy, x, y) => {
-      const m = new THREE.Mesh(strip, this.rimMaterial.clone());
-      m.scale.set(sx, sy, t);
-      m.position.set(x, y, 0);
-      this.add(m);
-    };
-    rim(w, t, 0,  h / 2);
-    rim(w, t, 0, -h / 2);
-    rim(t, h, -w / 2, 0);
-    rim(t, h,  w / 2, 0);
-  }
 }
 
 /**

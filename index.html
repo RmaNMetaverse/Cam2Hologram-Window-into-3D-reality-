@@ -173,10 +173,50 @@
       <label class="check"><input type="checkbox" id="c-anim" checked /> <span>Play glTF animations</span></label>
     </section>
 
+    <!-- ---- Environment ---- -->
+    <section class="group">
+      <h3>Environment</h3>
+      <select id="s-env" class="select"></select>
+      <p class="hint" id="env-hint"></p>
+    </section>
+
+    <!-- ---- Lighting ---- -->
+    <section class="group">
+      <h3>Lighting</h3>
+      <label class="slider">
+        <span>Direction &mdash; horizontal <i id="v-lightaz">32</i>&deg;</span>
+        <input type="range" id="s-lightaz" min="-180" max="180" step="1" value="32" />
+      </label>
+      <label class="slider">
+        <span>Direction &mdash; height <i id="v-lightel">33</i>&deg;</span>
+        <input type="range" id="s-lightel" min="-20" max="89" step="1" value="33" />
+      </label>
+      <label class="slider">
+        <span>Key intensity <i id="v-lightint">2.10</i></span>
+        <input type="range" id="s-lightint" min="0" max="8" step="0.05" value="2.1" />
+      </label>
+      <label class="colour">
+        <span>Key colour</span>
+        <input type="color" id="s-lightcol" value="#fff3e0" />
+      </label>
+      <label class="slider">
+        <span>Ambient <i id="v-ambient">0.75</i></span>
+        <input type="range" id="s-ambient" min="0" max="3" step="0.05" value="0.75" />
+      </label>
+      <label class="slider">
+        <span>Fill <i id="v-fill">0.75</i></span>
+        <input type="range" id="s-fill" min="0" max="3" step="0.05" value="0.75" />
+      </label>
+      <label class="check">
+        <input type="checkbox" id="c-lightfollow" /> <span>Key light follows your head</span>
+      </label>
+      <p class="hint">Choosing an environment loads a matching lighting setup, which you can then edit.</p>
+    </section>
+
     <!-- ---- Scene ---- -->
     <section class="group">
       <h3>Scene</h3>
-      <label class="check"><input type="checkbox" id="c-room" checked /> <span>Depth box (sells the illusion)</span></label>
+      <label class="check"><input type="checkbox" id="c-room" checked /> <span>Show environment</span></label>
       <label class="check"><input type="checkbox" id="c-frame" checked /> <span>Window frame</span></label>
       <label class="check"><input type="checkbox" id="c-props" checked /> <span>Parallax reference props</span></label>
       <label class="check"><input type="checkbox" id="c-shadow" checked /> <span>Shadows</span></label>

@@ -169,7 +169,7 @@ document.getElementById('btn-ar').onclick = async () => {
   for (const [name, win] of Object.entries(frames)) {
     const a = win.hologram;
     log(`${name}: arMode=${a.scene.cfg.arMode} ` +
-        `setDressingHidden=${!a.depthBox?.visible && !a.scene.depthBox.visible} ` +
+        `setDressingHidden=${!a.scene.environment.visible} ` +
         `status="${win.document.getElementById('ar-status').textContent}"`);
   }
 };

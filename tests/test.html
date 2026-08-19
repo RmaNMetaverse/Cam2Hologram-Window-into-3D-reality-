@@ -46,6 +46,7 @@ import {
 } from '../js/device.js';
 import { DEFAULTS, RANGES } from '../js/config.js';
 import { findRearCameraId, friendlyLabel } from '../js/passthrough.js';
+import { ENVIRONMENTS, ENVIRONMENT_KEYS, lightPosition } from '../js/environments.js';
 
 const out = document.getElementById('out');
 let pass = 0, fail = 0;
@@ -583,6 +584,168 @@ section('9 · AR passthrough — rear-camera selection');
 
   check('arMode ships off by default', DEFAULTS.arMode === false,
         'AR needs a second camera and a fresh gesture, so it never auto-restores');
+}
+
+
+/* =================================================== 10. ENVIRONMENTS & LIGHT */
+section('10 · Environments and lighting');
+
+{
+  const deg = (r) => r * 180 / Math.PI;
+  const D = 95;
+
+  // Azimuth/elevation exist so a person can reason about direction. The sign
+  // convention has to match the world: +X is the viewer's right, +Z towards them.
+  const front = lightPosition(0, 0, D);
+  check('azimuth 0 puts the light behind the viewer (+Z)',
+        near(front.x, 0, 1e-9) && near(front.z, D, 1e-9),
+        `(${front.x.toFixed(2)}, ${front.y.toFixed(2)}, ${front.z.toFixed(2)})`);
+
+  const right = lightPosition(90, 0, D);
+  check('positive azimuth swings the light to the viewer\u2019s RIGHT (+X)',
+        near(right.x, D, 1e-9) && near(right.z, 0, 1e-9),
+        `x = +${right.x.toFixed(1)}`);
+
+  const left = lightPosition(-90, 0, D);
+  check('negative azimuth swings it left, mirrored exactly',
+        near(left.x, -right.x, 1e-9) && near(left.z, right.z, 1e-9));
+
+  const above = lightPosition(0, 90, D);
+  check('elevation 90 puts the light straight overhead',
+        near(above.y, D, 1e-9) && near(above.x, 0, 1e-9) && near(above.z, 0, 1e-9));
+
+  // Fixed distance is what keeps exposure stable as the light swings; if this
+  // drifted, every direction change would double as a brightness change.
+  const lengths = [[0,0],[47,12],[-130,61],[180,-15],[90,89]]
+    .map(([a, e]) => lightPosition(a, e, D).length());
+  check('the light stays at a constant distance for every direction',
+        lengths.every((l) => near(l, D, 1e-9)),
+        `all ${lengths.length} sample directions at exactly ${D} cm`);
+}
+
+{
+  // Every preset must be selectable, buildable and complete: a half-defined one
+  // would leave the scene empty or the lighting sliders holding stale values.
+  const problems = [];
+  for (const key of ENVIRONMENT_KEYS) {
+    const env = ENVIRONMENTS[key];
+    if (typeof env.label !== 'string' || !env.label) problems.push(`${key}: no label`);
+    if (typeof env.hint !== 'string' || !env.hint) problems.push(`${key}: no hint`);
+    if (typeof env.build !== 'function') problems.push(`${key}: no build()`);
+    for (const f of ['azimuth', 'elevation', 'intensity', 'color', 'ambient', 'fill']) {
+      if (env.lighting?.[f] === undefined) problems.push(`${key}: lighting.${f} missing`);
+    }
+    if (!/^#[0-9a-fA-F]{6}$/.test(env.lighting?.color ?? '')) {
+      problems.push(`${key}: lighting.color is not a hex triple`);
+    }
+  }
+  check(`all ${ENVIRONMENT_KEYS.length} environments are completely defined`,
+        problems.length === 0, problems.join('; ') || ENVIRONMENT_KEYS.join(', '));
+
+  // Presets are written into config, so they must pass the same validation.
+  const bad = [];
+  for (const key of ENVIRONMENT_KEYS) {
+    const L = ENVIRONMENTS[key].lighting;
+    const pairs = [['lightAzimuthDeg', L.azimuth], ['lightElevationDeg', L.elevation],
+                   ['lightIntensity', L.intensity], ['ambientIntensity', L.ambient],
+                   ['fillIntensity', L.fill]];
+    for (const [k, v] of pairs) {
+      const r = RANGES[k];
+      if (r && (v < r[0] || v > r[1])) bad.push(`${key}.${k}=${v} outside [${r[0]}, ${r[1]}]`);
+    }
+  }
+  check('every environment\u2019s lighting preset survives config validation',
+        bad.length === 0, bad.join('; ') || 'all presets in range');
+
+  check('the default environment is a real preset',
+        ENVIRONMENT_KEYS.includes(DEFAULTS.environment), `default = "${DEFAULTS.environment}"`);
+
+  // Each builder runs for real; a throwing preset would blank the stage.
+  const failures = [];
+  for (const key of ENVIRONMENT_KEYS) {
+    const group = new THREE.Group();
+    try {
+      ENVIRONMENTS[key].build({ group, w: 53, h: 30, depth: 70 });
+    } catch (err) {
+      failures.push(`${key}: ${err.message}`);
+    }
+  }
+  check('every environment builds without throwing',
+        failures.length === 0, failures.join('; ') || `${ENVIRONMENT_KEYS.length} built`);
+
+  // Geometry must actually land in front of the viewer, not behind the window.
+  const spatial = [];
+  for (const key of ENVIRONMENT_KEYS.filter((k) => k !== 'void')) {
+    const group = new THREE.Group();
+    ENVIRONMENTS[key].build({ group, w: 53, h: 30, depth: 70 });
+    if (group.children.length === 0) { spatial.push(`${key}: built nothing`); continue; }
+    const box = new THREE.Box3().setFromObject(group);
+    if (box.isEmpty()) { spatial.push(`${key}: empty bounds`); continue; }
+    // Everything should sit at or behind the window plane (z <= 0).
+    if (box.max.z > 1) spatial.push(`${key}: pokes ${box.max.z.toFixed(1)}cm through the glass`);
+
+    // ...and must be centred on the window, not slid off to one side. An
+    // extrusion offset by half its own span looks fine in isolation and is
+    // completely wrong on screen.
+    const cx = (box.min.x + box.max.x) / 2;
+    if (Math.abs(cx) > 53 * 0.1) {
+      spatial.push(`${key}: centred at x = ${cx.toFixed(1)}cm, not on the window axis`);
+    }
+    if (box.max.x < 53 / 2 - 1 || box.min.x > -53 / 2 + 1) {
+      spatial.push(`${key}: does not span the window width`);
+    }
+  }
+  check('environments are centred on the window and span its width',
+        spatial.length === 0, spatial.join('; ') || 'all presets centred behind z = 0');
+}
+
+{
+  // The real test of a backdrop: stand well off-axis and fire rays through the
+  // corners of the window. If any ray escapes without hitting geometry, that is
+  // a black wedge tearing open in the corner of the screen — the exact failure
+  // that looks fine head-on and ruins the illusion the moment you lean.
+  const W = 53, H = 30, DEPTH = 70;
+  const enclosing = ['grid', 'cyclorama', 'pedestal', 'horizon'];
+  const eyes = [
+    { x: -35, y: 15, z: 45 }, { x: 35, y: 15, z: 45 },
+    { x: -35, y: -15, z: 45 }, { x: 35, y: -15, z: 45 },
+  ];
+  const corners = [
+    new THREE.Vector3(-W / 2, -H / 2, 0), new THREE.Vector3(W / 2, -H / 2, 0),
+    new THREE.Vector3(-W / 2, H / 2, 0), new THREE.Vector3(W / 2, H / 2, 0),
+  ];
+
+  const leaks = [];
+  for (const key of enclosing) {
+    const group = new THREE.Group();
+    ENVIRONMENTS[key].build({ group, w: W, h: H, depth: DEPTH });
+    group.updateMatrixWorld(true);
+
+    const ray = new THREE.Raycaster();
+    ray.far = 1e5;
+    let missed = 0;
+    for (const eye of eyes) {
+      const origin = new THREE.Vector3(eye.x, eye.y, eye.z);
+      for (const corner of corners) {
+        const dir = corner.clone().sub(origin).normalize();
+        ray.set(origin, dir);
+        if (ray.intersectObject(group, true).length === 0) missed++;
+      }
+    }
+    if (missed) leaks.push(`${key}: ${missed}/${eyes.length * corners.length} rays escaped`);
+  }
+
+  check('backdrops still cover the view when the head is far off-axis',
+        leaks.length === 0,
+        leaks.join('; ') || `${enclosing.length} enclosing presets, 16 corner rays each, no leaks`);
+}
+
+{
+  check('the void preset is genuinely empty', (() => {
+    const g = new THREE.Group();
+    ENVIRONMENTS.void.build({ group: g, w: 53, h: 30, depth: 70 });
+    return g.children.length === 0;
+  })());
 }
 
 /* ================================================================= SUMMARY */

@@ -450,6 +450,59 @@ input[type=range]::-moz-range-thumb {
   cursor: grab;
 }
 
+/* select + colour */
+
+.select {
+  width: 100%;
+  padding: 9px 30px 9px 11px;
+  border: 1px solid var(--stroke);
+  border-radius: 9px;
+  background-color: rgba(0, 0, 0, .28);
+  /* Chevron drawn inline so the control needs no image asset and matches the
+     panel palette in both the closed and focused states. */
+  background-image:
+    url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5l5-5' fill='none' stroke='%238792a8' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  background-size: 11px;
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.select:hover { border-color: var(--stroke-hi); }
+.select:focus-visible { outline: none; border-color: var(--accent); }
+/* The dropdown list itself is OS-rendered; only the colours are ours to set. */
+.select option { background: var(--panel-solid); color: var(--text); }
+
+.colour {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 13px 0;
+  font-size: 12px;
+  color: #b6bfd1;
+}
+
+.colour input[type=color] {
+  width: 54px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--stroke-hi);
+  border-radius: 7px;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.colour input[type=color]::-webkit-color-swatch-wrapper { padding: 3px; }
+.colour input[type=color]::-webkit-color-swatch { border: 0; border-radius: 4px; }
+.colour input[type=color]::-moz-color-swatch { border: 0; border-radius: 4px; }
+
 /* checkboxes */
 
 .check {
@@ -667,6 +720,8 @@ input[type=range]::-moz-range-thumb {
   input[type=range]::-moz-range-thumb { width: 20px; height: 20px; }
 
   .check { margin: 14px 0; font-size: 13.5px; }
+  .select { padding: 13px 30px 13px 12px; font-size: 14px; }
+  .colour input[type=color] { width: 64px; height: 38px; }
   .check input { width: 20px; height: 20px; }
   .btn-row button { padding: 12px 10px; font-size: 13px; }
   .segmented button { padding: 11px 4px; font-size: 13px; }

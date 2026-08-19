@@ -26,6 +26,7 @@ first load there are **no network requests at all** — every dependency is vend
 - [Running it](#running-it)
 - [Offline by default](#offline-by-default)
 - [On a phone](#on-a-phone)
+- [Environments and lighting](#environments-and-lighting)
 - [AR passthrough mode](#ar-passthrough-mode)
 - [Deploying to GitHub Pages](#deploying-to-github-pages)
 - [How it works](#how-it-works)
@@ -153,6 +154,50 @@ Beyond that, three mobile-specific things happen:
 
 iOS has no Fullscreen API on iPhone. Use **Share → Add to Home Screen** and launch from
 there; the app ships the meta tags for a fullscreen standalone shell.
+
+---
+
+## Environments and lighting
+
+The illusion needs something to measure against. A model on black gives the visual system
+nothing — move your head and it reads as *the model* rotating, not as you moving. Every
+environment exists to supply depth cues: a receding surface, hard edges at known distances,
+a shading gradient, contact shadows.
+
+| Preset | What it gives you |
+|---|---|
+| **Grid room** *(default)* | The original diorama. Dense detail on all five faces for parallax to bite into. |
+| **Studio cyclorama** | A seamless floor-to-wall sweep. No corner line, so the *shading gradient* is what tells you where the floor ends — and it slides as you move. |
+| **Neon corridor** | Lit frames at known distances. The strongest side-to-side parallax of the set. |
+| **Museum plinth** | The model on an object of known size; its elliptical top opens and closes with your eye height. |
+| **Infinite horizon** | A ground plane running to a far horizon that rises and falls with your eye. |
+| **Void** | Nothing but the model — useful for silhouettes, and a reminder how much the others do. |
+
+<p>
+<img src="docs/env-cyclorama.jpg" alt="Studio cyclorama environment" width="49%" />
+<img src="docs/env-corridor.jpg" alt="Neon corridor environment" width="49%" />
+</p>
+
+*Studio cyclorama and neon corridor, both viewed from ~24 cm off-axis.*
+
+### Lighting
+
+Full control over the key light: **horizontal** and **height** direction, **intensity**,
+**colour**, plus **ambient** and **fill** levels, and an optional *key light follows your
+head*.
+
+Direction is stored as azimuth/elevation rather than a raw XYZ position for two reasons: it
+is what a person actually reasons about ("up and to the left"), and it keeps the light at a
+fixed distance, so swinging it around does not double as a brightness change.
+
+Selecting an environment loads a lighting setup that suits it — studio-bright for the
+cyclorama, low and warm for the horizon, a hard top-light for the plinth. Those values are
+written into the live config, so the sliders move with them and stay editable. A starting
+point, not a lock.
+
+*Key light follows your head* is applied as an **offset** to the configured azimuth rather
+than replacing it, so your manual direction still means something while the shading responds
+to movement.
 
 ---
 
@@ -404,9 +449,10 @@ On phones and tablets, the **AR** button sits on-screen in the bottom-right.
 
 ## Tests
 
-`tests/test.html` covers the geometry the illusion depends on — **65 assertions** over the
+`tests/test.html` covers the geometry the illusion depends on — **77 assertions** over the
 frustum, parallax direction, counter-rotation sign, landmark-to-world conversion, the offset
-chain, mobile orientation handling, AR camera selection, the 1€ filter, and config persistence.
+chain, mobile orientation handling, AR camera selection, environment geometry, lighting
+direction, the 1€ filter, and config persistence.
 
 ```bash
 python serve.py
@@ -423,6 +469,10 @@ The load-bearing assertions are worth knowing about:
 - **face on the left of the raw image → viewer has moved to their right** — the un-mirrored
   camera flip.
 - **viewer moves left → model yaws to its own left** — the feature in one line.
+- **backdrops still cover the view when the head is far off-axis** — raycasts the window
+  corners from four extreme eye positions. Catches the failure where a backdrop looks right
+  head-on and tears open into a black wedge the moment you lean, which is exactly the
+  movement this app encourages.
 - **the same face at the same pixel size reports the same depth in either orientation** —
   catches the portrait/landscape focal-length trap.
 - **every device default survives config range validation** — a regression guard for a real
@@ -443,7 +493,8 @@ js/
   device.js           device class, physical defaults, orientation-aware camera position
   tracker.js          camera + MediaPipe FaceLandmarker
   passthrough.js      rear-camera AR background, with dual-camera detection
-  stagecraft.js       depth box, window frame, parallax props
+  environments.js     stage presets and the key-light direction maths
+  stagecraft.js       window frame, parallax props
   filters.js          1€ filter
   config.js           persisted, range-validated settings
   ui.js               control panel wiring

@@ -27,6 +27,16 @@ export const DEFAULTS = {
   autoSpin: false,
   playAnimations: true,
 
+  /* ---- environment & lighting ---- */
+  environment: 'grid',           // key into ENVIRONMENTS (environments.js)
+  lightAzimuthDeg: 32,           // 0 = behind the viewer, + swings to their right
+  lightElevationDeg: 33,         // degrees above the horizon
+  lightIntensity: 2.1,
+  lightColor: '#fff3e0',
+  ambientIntensity: 0.75,
+  fillIntensity: 0.75,
+  lightFollowsViewer: false,     // rotate the key light with the head, on top of the manual azimuth
+
   /* ---- scene ---- */
   // AR passthrough. Not persisted as "on" across devices in any meaningful way,
   // but kept here so the whole config plumbing (sync, listeners) applies to it.
@@ -101,6 +111,14 @@ export const RANGES = {
   screenDiagonalInches: [3, 90], camOffsetXCm: [-40, 40], camOffsetYCm: [-40, 40],
   camFovDeg: [35, 110], ipdCm: [5.0, 7.6], minCutoff: [0.05, 6], beta: [0, 0.08],
   recenterX: [-100, 100], recenterY: [-100, 100],
+  lightAzimuthDeg: [-180, 180], lightElevationDeg: [-20, 89],
+  lightIntensity: [0, 8], ambientIntensity: [0, 3], fillIntensity: [0, 3],
+};
+
+/** Keys validated against a fixed set rather than a numeric range. */
+const ENUMS = {
+  deviceClass: ['phone', 'tablet', 'desktop'],
+  environment: ['grid', 'cyclorama', 'corridor', 'pedestal', 'horizon', 'void'],
 };
 
 function load() {
@@ -117,10 +135,15 @@ function load() {
   const clean = {};
   for (const [k, v] of Object.entries(obj)) {
     if (!(k in DEFAULTS)) continue;                       // unknown/renamed key
-    // `deviceClass` defaults to null, so a plain typeof comparison would always
-    // reject the stored string. It is validated against the known classes.
-    if (k === 'deviceClass') {
-      if (['phone', 'tablet', 'desktop'].includes(v)) clean[k] = v;
+    // Enum keys are checked against their allowed values. `deviceClass` also
+    // defaults to null, so a plain typeof comparison would always reject it.
+    if (k in ENUMS) {
+      if (ENUMS[k].includes(v)) clean[k] = v;
+      continue;
+    }
+    // A colour must be a real hex triple; a malformed one makes THREE throw.
+    if (k === 'lightColor') {
+      if (/^#[0-9a-fA-F]{6}$/.test(v)) clean[k] = v;
       continue;
     }
     if (typeof v !== typeof DEFAULTS[k]) continue;        // type drift

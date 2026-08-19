@@ -8,12 +8,13 @@
 
 import { config, set, onChange, reset, applyMode, MODE_HINTS } from './config.js';
 import { isTouchDevice, supportsFullscreen } from './device.js';
+import { ENVIRONMENTS } from './environments.js';
 
 const $ = (id) => document.getElementById(id);
 
 /**
  * [ element id, config key, kind, value-label id, formatter ]
- * kind: 'range' → number, 'check' → boolean
+ * kind: 'range' → number, 'check' → boolean, 'select'/'colour' → string
  */
 const BINDINGS = [
   ['s-parallax',  'parallaxGain',         'range', 'v-parallax',  (v) => v.toFixed(2)],
@@ -27,6 +28,15 @@ const BINDINGS = [
   ['s-baseyaw',   'modelBaseYawDeg',      'range', 'v-baseyaw',   (v) => v.toFixed(0)],
   ['c-spin',      'autoSpin',             'check'],
   ['c-anim',      'playAnimations',       'check'],
+
+  ['s-env',       'environment',          'select'],
+  ['s-lightaz',   'lightAzimuthDeg',      'range', 'v-lightaz',   (v) => v.toFixed(0)],
+  ['s-lightel',   'lightElevationDeg',    'range', 'v-lightel',   (v) => v.toFixed(0)],
+  ['s-lightint',  'lightIntensity',       'range', 'v-lightint',  (v) => v.toFixed(2)],
+  ['s-lightcol',  'lightColor',           'colour'],
+  ['s-ambient',   'ambientIntensity',     'range', 'v-ambient',   (v) => v.toFixed(2)],
+  ['s-fill',      'fillIntensity',        'range', 'v-fill',      (v) => v.toFixed(2)],
+  ['c-lightfollow', 'lightFollowsViewer', 'check'],
 
   ['c-ar',        'arMode',               'check'],
   ['c-room',      'showRoom',             'check'],
@@ -73,6 +83,7 @@ export class UI {
     this.toastEl = $('toast');
     this.toastTimer = 0;
 
+    this._buildEnvironmentOptions();
     this._bindWidgets();
     this._bindButtons();
     this._bindModeSegment();
@@ -83,10 +94,14 @@ export class UI {
       this.syncFromConfig(keys);
       if (keys.includes('showPreview') || keys.includes('showHud')) this.applyChrome();
       if (keys.includes('mode')) this._paintModeSegment();
+      if (keys.includes('environment')) {
+        this.setEnvironmentHint(ENVIRONMENTS[config.environment]?.hint);
+      }
     });
 
     this.syncFromConfig();
     this._paintModeSegment();
+    this.setEnvironmentHint(ENVIRONMENTS[config.environment]?.hint);
     this.applyChrome();
 
     // On a phone the panel covers the entire viewport, so opening it by default
@@ -137,6 +152,23 @@ export class UI {
     return window.matchMedia('(max-width: 760px)').matches || isTouchDevice();
   }
 
+  /** Options come from the registry so a new preset needs no HTML change. */
+  _buildEnvironmentOptions() {
+    const sel = $('s-env');
+    sel.innerHTML = '';
+    for (const [key, env] of Object.entries(ENVIRONMENTS)) {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = env.label;
+      sel.appendChild(opt);
+    }
+  }
+
+  /** One-line description of the selected environment. */
+  setEnvironmentHint(text) {
+    $('env-hint').textContent = text || '';
+  }
+
   /* ------------------------------------------------------------- widgets */
 
   _bindWidgets() {
@@ -153,7 +185,9 @@ export class UI {
       if (key === 'arMode') continue;
 
       el.addEventListener('input', () => {
-        const value = kind === 'check' ? el.checked : parseFloat(el.value);
+        const value = kind === 'check' ? el.checked
+                    : kind === 'range' ? parseFloat(el.value)
+                    : el.value;                      // select, colour
         // Leaving auto mode should not teleport the camera: seed the manual
         // sliders from whatever auto had computed, so the handoff is invisible.
         if (key === 'camOffsetAuto' && value === false) {
@@ -176,9 +210,11 @@ export class UI {
       const v = config[w.key];
       if (w.kind === 'check') {
         w.el.checked = !!v;
-      } else {
+      } else if (w.kind === 'range') {
         if (parseFloat(w.el.value) !== v) w.el.value = String(v);
         if (w.label) w.label.textContent = w.fmt ? w.fmt(v) : String(v);
+      } else {
+        if (w.el.value !== v) w.el.value = v;
       }
     }
     // AR passthrough overrides all set dressing, so those toggles are inert.

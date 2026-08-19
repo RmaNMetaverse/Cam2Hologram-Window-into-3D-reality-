@@ -25,7 +25,8 @@ import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 import { applyOffAxisProjection } from './geometry.js';
-import { DepthBox, WindowFrame, ParallaxProps, buildFallbackModel, disposeChildren } from './stagecraft.js';
+import { WindowFrame, ParallaxProps, buildFallbackModel, disposeChildren } from './stagecraft.js';
+import { ENVIRONMENTS, lightPosition } from './environments.js';
 import { damp, clamp } from './filters.js';
 
 // Vendored decoders. These are fetched at runtime rather than imported, so they
@@ -39,6 +40,9 @@ const KTX2_PATH = `${VENDOR}three/examples/jsm/libs/basis/`;
 const NEAR_CM = 1;
 const FAR_CM = 4000;
 const FORWARD = new THREE.Vector3(0, 0, 1);
+
+/** Key light distance, cm. Fixed so swinging the light does not change exposure. */
+const LIGHT_DISTANCE = 95;
 
 export class HologramScene {
   /**
@@ -131,35 +135,63 @@ export class HologramScene {
   }
 
   _buildStage() {
-    this.depthBox = new DepthBox();
+    // The environment is rebuilt wholesale when the preset or the window
+    // dimensions change; `_envSig` is what decides whether that is necessary.
+    this.environment = new THREE.Group();
+    this.environment.name = 'Environment';
+    this._envSig = null;
+
     this.windowFrame = new WindowFrame();
     this.props = new ParallaxProps();
-    this.scene.add(this.depthBox, this.windowFrame, this.props);
+    this.scene.add(this.environment, this.windowFrame, this.props);
 
-    this.scene.add(new THREE.HemisphereLight(0x9fc4ff, 0x141a26, 0.75));
+    this.hemiLight = new THREE.HemisphereLight(0x9fc4ff, 0x141a26, 0.75);
+    this.scene.add(this.hemiLight);
 
     const key = new THREE.DirectionalLight(0xfff3e0, 2.1);
-    key.position.set(38, 46, 60);
     key.castShadow = true;
     key.shadow.mapSize.set(this.budget.shadowMapSize, this.budget.shadowMapSize);
     key.shadow.bias = -0.0008;
     key.shadow.normalBias = 0.35;
     const cam = key.shadow.camera;
-    cam.near = 5; cam.far = 300;
-    cam.left = -70; cam.right = 70; cam.top = 70; cam.bottom = -70;
+    cam.near = 5; cam.far = 420;
+    cam.left = -95; cam.right = 95; cam.top = 95; cam.bottom = -95;
     cam.updateProjectionMatrix();
     this.scene.add(key, key.target);
     this.keyLight = key;
 
-    const fill = new THREE.DirectionalLight(0x6fb4ff, 0.75);
-    fill.position.set(-52, 10, 34);
-    this.scene.add(fill);
+    this.fillLight = new THREE.DirectionalLight(0x6fb4ff, 0.75);
+    this.fillLight.position.set(-52, 10, 34);
+    this.scene.add(this.fillLight);
 
     const rimA = new THREE.PointLight(0x4fd1ff, 320, 220, 2);
     rimA.position.set(-34, 16, -22);
     const rimB = new THREE.PointLight(0xa67bff, 260, 220, 2);
     rimB.position.set(36, -12, -30);
     this.scene.add(rimA, rimB);
+    this.rimLights = [rimA, rimB];
+
+    this.applyLighting();
+  }
+
+  /**
+   * Push the live lighting config onto the actual lights.
+   *
+   * Direction is stored as azimuth/elevation rather than a raw position: those
+   * are what a person reasons about ("up and to the left"), and keeping the
+   * light at a fixed distance means swinging it around does not change exposure.
+   */
+  applyLighting() {
+    const c = this.cfg;
+    this.keyLight.color.set(c.lightColor);
+    this.keyLight.intensity = c.lightIntensity;
+    this.keyLight.position.copy(
+      lightPosition(c.lightAzimuthDeg, c.lightElevationDeg, LIGHT_DISTANCE));
+    this.hemiLight.intensity = c.ambientIntensity;
+    this.fillLight.intensity = c.fillIntensity;
+    // The coloured rims are scene dressing, not part of the model's key light,
+    // so they follow the ambient level rather than the key.
+    for (const rim of this.rimLights) rim.visible = c.ambientIntensity > 0.05;
   }
 
   _makeLoader() {
@@ -189,9 +221,18 @@ export class HologramScene {
 
   _rebuildStage() {
     const d = this.cfg.roomDepthCm;
-    this.depthBox.build(this.windowW, this.windowH, d);
-    this.windowFrame.build(this.windowW, this.windowH);
-    this.props.build(this.windowW, this.windowH, d);
+    const w = this.windowW, h = this.windowH;
+
+    const sig = `${this.cfg.environment}|${w.toFixed(2)}|${h.toFixed(2)}|${d.toFixed(2)}`;
+    if (this._envSig !== sig) {
+      disposeChildren(this.environment);
+      const env = ENVIRONMENTS[this.cfg.environment] || ENVIRONMENTS.grid;
+      env.build({ group: this.environment, w, h, depth: d });
+      this._envSig = sig;
+    }
+
+    this.windowFrame.build(w, h);
+    this.props.build(w, h, d);
     this.applyVisibility();
   }
 
@@ -201,7 +242,7 @@ export class HologramScene {
    */
   applyVisibility() {
     const ar = this.cfg.arMode;
-    this.depthBox.visible = !ar && this.cfg.showRoom;
+    this.environment.visible = !ar && this.cfg.showRoom;
     this.windowFrame.visible = !ar && this.cfg.showFrame;
     this.props.visible = !ar && this.cfg.showProps;
   }
@@ -272,7 +313,11 @@ export class HologramScene {
       this.scene.traverse((o) => { if (o.isMesh && o.material) o.material.needsUpdate = true; });
     }
     if (has('arMode')) this.setTransparent(this.cfg.arMode);
-    if (has('roomDepthCm')) this._rebuildStage();
+    if (has('roomDepthCm', 'environment')) this._rebuildStage();
+    if (has('lightAzimuthDeg', 'lightElevationDeg', 'lightIntensity', 'lightColor',
+            'ambientIntensity', 'fillIntensity')) {
+      this.applyLighting();
+    }
     if (has('showRoom', 'showFrame', 'showProps')) this.applyVisibility();
     if (has('modelSizeCm', 'modelDepthCm', 'modelHeightCm')) this._placeModel();
     if (has('modelBaseYawDeg')) this._updateBaseQuat();
@@ -473,13 +518,14 @@ export class HologramScene {
     if (this.mixer && cfg.playAnimations) this.mixer.update(dt);
     if (this.props.visible) this.props.update(dt, this.elapsed);
 
-    // Keep the key light roughly over the viewer's shoulder so shading responds
-    // to head motion too — a subtle but effective extra depth cue.
-    this.keyLight.position.set(
-      this.eye.x * 0.6 + 30,
-      this.eye.y * 0.6 + 45,
-      Math.max(this.eye.z, 30),
-    );
+    // Optionally swing the key light with the viewer, so shading responds to
+    // head motion too. Applied as an OFFSET to the configured azimuth rather
+    // than a replacement, so the manual direction still means something.
+    if (cfg.lightFollowsViewer) {
+      const viewerAz = Math.atan2(this.eye.x, Math.max(this.eye.z, 1)) * 180 / Math.PI;
+      this.keyLight.position.copy(lightPosition(
+        cfg.lightAzimuthDeg + viewerAz * 0.6, cfg.lightElevationDeg, LIGHT_DISTANCE));
+    }
 
     this.renderer.render(this.scene, this.camera);
     this._adaptResolution(dt);
@@ -488,7 +534,7 @@ export class HologramScene {
 
   dispose() {
     disposeChildren(this.modelGroup);
-    disposeChildren(this.depthBox);
+    disposeChildren(this.environment);
     disposeChildren(this.windowFrame);
     disposeChildren(this.props);
     this._draco?.dispose?.();

@@ -15,6 +15,7 @@ import { PassthroughCamera } from './passthrough.js';
 import { MeshOverlay } from './overlay.js';
 import { HologramScene } from './scene.js';
 import { UI } from './ui.js';
+import { ENVIRONMENTS } from './environments.js';
 import {
   eyeFromLandmarks,
   eyeToCanvasSpace,
@@ -358,6 +359,23 @@ class App {
 
   onConfigChange(keys) {
     this.scene.onConfigChange(keys);
+
+    // Each environment ships a lighting setup that suits it. Applying it to
+    // config (rather than straight to the lights) means the sliders move with
+    // it and stay editable — a starting point, not a lock.
+    if (keys.includes('environment')) {
+      const preset = ENVIRONMENTS[config.environment]?.lighting;
+      if (preset) {
+        set({
+          lightAzimuthDeg: preset.azimuth,
+          lightElevationDeg: preset.elevation,
+          lightIntensity: preset.intensity,
+          lightColor: preset.color,
+          ambientIntensity: preset.ambient,
+          fillIntensity: preset.fill,
+        });
+      }
+    }
     // "Reset settings" clears the device profile too; re-seed it so a phone
     // does not end up holding a 24-inch diagonal.
     if (keys.includes('deviceClass') && config.deviceClass === null) {
