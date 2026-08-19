@@ -257,6 +257,22 @@
 
 <button id="panel-reopen" class="panel-reopen hidden" title="Show panel (H)">&laquo;</button>
 
+<!-- ============ AR QUICK TOGGLE (mobile) ============ -->
+<!-- AR passthrough is the headline mobile feature, so it gets a thumb-reachable
+     control on the stage itself rather than living only inside the panel. -->
+<button id="ar-fab" class="ar-fab hidden" type="button" aria-pressed="false"
+        title="Transparent AR mode — show the model over your rear camera">
+  <span class="ar-fab-icon" aria-hidden="true">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+         stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2.6 20.5 7v10L12 21.4 3.5 17V7z" />
+      <path d="M3.5 7 12 11.6 20.5 7" />
+      <path d="M12 11.6v9.8" />
+    </svg>
+  </span>
+  <span class="ar-fab-label">AR</span>
+</button>
+
 <div id="toast" class="toast"></div>
 <div id="dropzone" class="dropzone"><div>Drop a <b>.glb</b> or <b>.gltf</b> to load it</div></div>
 

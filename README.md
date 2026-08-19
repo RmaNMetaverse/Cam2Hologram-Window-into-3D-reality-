@@ -158,14 +158,25 @@ there; the app ships the meta tags for a fullscreen standalone shell.
 
 ## AR passthrough mode
 
-**Phones and tablets only.** Toggle **Transparent AR mode** in the panel and the diorama
-disappears — no depth box, no window frame, no parallax props. The canvas clears to
+**Phones and tablets only.** Tap the **AR** button in the bottom-right of the screen and the
+diorama disappears — no depth box, no window frame, no parallax props. The canvas clears to
 transparent, your **rear camera** fills the background, and the model is left floating in
 your actual room, still driven by head tracking.
 
-<img src="docs/ar-mode.png" alt="AR passthrough in portrait and landscape on a phone" width="700" />
+<img src="docs/ar-mode.png" alt="The AR button in both states: off with the diorama, on with rear-camera passthrough" width="700" />
 
-The control only appears on non-desktop devices, and AR always starts **off** — it needs a
+*Left: AR off — the diorama, button in its resting state. Right: AR on — rear-camera
+passthrough, button lit.*
+
+The button lives on the stage rather than in the settings panel, because it is the one
+control you want mid-gesture while holding a phone. It sits in the bottom-right — the
+reachable corner for a thumb, and the only one not already occupied by the HUD, the camera
+preview or the panel button — with a 52 px hit target and safe-area padding so it clears a
+home bar. The same toggle also appears in the panel under **AR passthrough**, alongside its
+status line; the two stay in sync in both directions, and both are locked while the camera
+opens so a double-tap cannot race itself.
+
+The controls only appear on non-desktop devices, and AR always starts **off** — it needs a
 second camera and a fresh gesture, so restoring it automatically would be wrong.
 
 ### It needs two cameras at once
@@ -387,6 +398,8 @@ this is not optional.
 | `1` `2` `3` | Window / Hybrid / Turntable |
 | `Space` | freeze tracking (holds the current viewpoint) |
 
+On phones and tablets, the **AR** button sits on-screen in the bottom-right.
+
 ---
 
 ## Tests
@@ -466,7 +479,7 @@ first run (with fallback hosts) and are then browser-cached; the rest is local.
 | Blank page on GitHub Pages | Confirm `.nojekyll` is committed and Pages is serving `/ (root)` of `main`. |
 | AR mode says head tracking is paused | Your device runs one camera at a time (iOS). Turn AR off to resume tracking. |
 | AR mode picks a fisheye/ultra-wide lens | Multi-lens phone. Report the camera label — lens preference is in `js/passthrough.js`. |
-| No AR toggle | It is hidden on desktop; there is no rear camera to pass through. |
+| No AR button | It is hidden on desktop; there is no rear camera to pass through. |
 
 ---
 

@@ -531,6 +531,78 @@ input[type=range]::-moz-range-thumb {
   transition: width .18s ease;
 }
 
+/* ---------------- AR quick toggle ---------------- */
+
+/* Bottom-right: the reachable corner for a thumb, and the only one not already
+   taken (HUD top-left, preview bottom-left, panel button top-right).
+   z-index sits above the HUD but below the panel, so the full-screen mobile
+   panel covers it when open. */
+.ar-fab {
+  position: fixed;
+  right: calc(16px + env(safe-area-inset-right));
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 25;
+
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 20px 13px 17px;
+  min-height: 52px;
+
+  border: 1px solid var(--stroke-hi);
+  border-radius: 999px;
+  background: rgba(14, 18, 28, 0.86);
+  backdrop-filter: blur(14px);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 12px 32px -10px rgba(0, 0, 0, .8);
+  transition: background .2s, border-color .2s, color .2s, transform .12s, box-shadow .2s;
+}
+
+.ar-fab:active { transform: scale(.96); }
+
+.ar-fab-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+}
+
+.ar-fab-icon svg { width: 100%; height: 100%; }
+
+/* Active: unmistakably "on", since the whole scene changing is the only other
+   signal and a user who just enabled it needs to know the tap registered. */
+.ar-fab.active {
+  background: linear-gradient(100deg, var(--accent), var(--accent-2));
+  border-color: transparent;
+  color: #05070c;
+  box-shadow: 0 12px 34px -8px rgba(79, 209, 255, .55);
+}
+
+/* Busy: opening a camera takes a moment and can fail, so the control is locked
+   rather than letting a second tap race the first. */
+.ar-fab.busy {
+  pointer-events: none;
+  opacity: .65;
+}
+
+.ar-fab.busy .ar-fab-icon { animation: ar-pulse 1s ease-in-out infinite; }
+
+@keyframes ar-pulse {
+  0%, 100% { opacity: .35; transform: scale(.9); }
+  50%      { opacity: 1;   transform: scale(1.05); }
+}
+
+@media (hover: hover) {
+  .ar-fab:hover { border-color: var(--accent); }
+  .ar-fab.active:hover { filter: brightness(1.08); }
+}
+
 /* ---------------- toast ---------------- */
 
 .toast {
@@ -640,7 +712,13 @@ input[type=range]::-moz-range-thumb {
   .preview.collapsed { width: 104px; }
   .preview-bar { font-size: 9px; padding: 4px 4px 4px 7px; }
 
-  .toast { bottom: calc(20px + env(safe-area-inset-bottom)); max-width: 88vw; white-space: normal; text-align: center; }
+  /* Lifted above the AR button, which shares the bottom edge. */
+  .toast {
+    bottom: calc(84px + env(safe-area-inset-bottom));
+    max-width: 88vw;
+    white-space: normal;
+    text-align: center;
+  }
 
   .splash { padding: 0; }
   .splash-card {

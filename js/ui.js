@@ -68,6 +68,8 @@ export class UI {
     this.reopen = $('panel-reopen');
     this.preview = $('preview');
     this.hud = $('hud');
+    this.arFab = $('ar-fab');
+    this._arBusy = false;
     this.toastEl = $('toast');
     this.toastTimer = 0;
 
@@ -92,9 +94,32 @@ export class UI {
     if (this.isCompact()) this.togglePanel(false);
   }
 
-  /** Show the AR passthrough control. Desktops have no rear camera. */
+  /**
+   * Toggle AR passthrough on behalf of either control.
+   *
+   * Opening a camera is slow and can fail, so both controls are locked for the
+   * duration and then resynced from config — which reflects what actually
+   * happened, not what was asked for.
+   */
+  async _requestAr(wanted) {
+    if (this._arBusy) return;
+    this._arBusy = true;
+    $('c-ar').disabled = true;
+    this.arFab.classList.add('busy');
+    try {
+      await this.h.onToggleAr(wanted);
+    } finally {
+      this._arBusy = false;
+      $('c-ar').disabled = false;
+      this.arFab.classList.remove('busy');
+      this.syncFromConfig(['arMode']);
+    }
+  }
+
+  /** Show the AR passthrough controls. Desktops have no rear camera. */
   enableArControl(show) {
     $('group-ar').classList.toggle('hidden', !show);
+    this.arFab.classList.toggle('hidden', !show);
   }
 
   /** Persistent line under the AR toggle; pass null to clear. */
@@ -165,6 +190,8 @@ export class UI {
         el.disabled = ar;
         el.closest('.check').style.opacity = ar ? 0.4 : 1;
       }
+      this.arFab?.classList.toggle('active', ar);
+      this.arFab?.setAttribute('aria-pressed', String(ar));
     }
 
     // Both camera-offset sliders are meaningless while "auto" is on: the
@@ -200,18 +227,10 @@ export class UI {
       fileInput.value = '';
     };
 
-    const ar = $('c-ar');
-    ar.addEventListener('change', async () => {
-      const wanted = ar.checked;
-      ar.disabled = true;
-      try {
-        await this.h.onToggleAr(wanted);
-      } finally {
-        ar.disabled = false;
-        // Whatever happened, the checkbox must reflect reality, not intent.
-        this.syncFromConfig(['arMode']);
-      }
-    });
+    // Two controls, one path: the on-stage button and the panel checkbox both
+    // route through _requestAr so they can never race or drift out of step.
+    $('c-ar').addEventListener('change', (e) => this._requestAr(e.target.checked));
+    this.arFab.addEventListener('click', () => this._requestAr(!config.arMode));
 
     $('btn-default').onclick = () => this.h.onLoadDefault();
     $('btn-recenter').onclick = () => this.h.onRecenter();
