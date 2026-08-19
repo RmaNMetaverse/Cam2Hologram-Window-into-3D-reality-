@@ -11,6 +11,7 @@ import * as THREE from 'three';
 import { config, set, onChange, DEFAULTS } from './config.js';
 import { Vec3Filter, damp } from './filters.js';
 import { HeadTracker } from './tracker.js';
+import { PassthroughCamera } from './passthrough.js';
 import { MeshOverlay } from './overlay.js';
 import { HologramScene } from './scene.js';
 import { UI } from './ui.js';
@@ -57,6 +58,7 @@ class App {
     this.scene = new HologramScene(this.canvas, config, this.budget,
                                    restDistanceForClass(this.deviceClass));
     this.tracker = new HeadTracker(this.video);
+    this.passthrough = new PassthroughCamera($('ar-video'));
     this.overlay = new MeshOverlay($('overlay'));
     this.filter = new Vec3Filter(config.minCutoff, config.beta);
 
@@ -78,6 +80,7 @@ class App {
       onClearRecenter: () => this.clearRecenter(),
       onFullscreen: () => this.toggleFullscreen(),
       getAutoCameraOffset: () => this.layout?.cameraOffset,
+      onToggleAr: (on) => this.toggleAr(on),
       onFreeze: () => {
         const frozen = this.tracker.toggleFreeze();
         this.ui.toast(frozen ? 'Tracking frozen' : 'Tracking resumed');
@@ -129,6 +132,13 @@ class App {
     this.measure();
     this.ui.revealChrome();
     $('hud').classList.toggle('hidden', !config.showHud);
+
+    // Only phones and tablets have a rear camera worth passing through.
+    this.ui.enableArControl(this.deviceClass !== 'desktop');
+    // AR is never restored automatically: it needs a second camera and a fresh
+    // permission-backed gesture, so it always starts off.
+    if (config.arMode) set({ arMode: false });
+    this.scene.setTransparent(false);
 
     this.lastFrame = performance.now();
     this.loop = this.loop.bind(this);
@@ -265,6 +275,67 @@ class App {
   clearRecenter() {
     set({ recenterX: 0, recenterY: 0 });
     this.ui.toast('Calibration offset cleared');
+  }
+
+  /**
+   * Turn AR passthrough on or off.
+   *
+   * Config is only updated once the camera is actually running, so a failure
+   * leaves the app in a consistent state and the checkbox snaps back.
+   */
+  async toggleAr(on) {
+    if (!on) {
+      this.passthrough.stop();
+      $('ar-video').classList.add('hidden');
+      set({ arMode: false });
+      this.ui.setArStatus(null);
+
+      // On a single-camera device the rear stream forced the front one closed,
+      // and stopping the rear stream does not bring it back. Telling the user
+      // "turn AR off to resume tracking" is only true if we actually reopen it.
+      if (!this.tracker.frontIsLive) {
+        this.ui.toast('AR off — restarting face tracking…');
+        const ok = await this.tracker.restartCamera();
+        this.filter.reset();
+        this.ui.toast(ok ? 'Face tracking resumed'
+                         : 'Could not reopen the front camera — reload the page', ok ? 1900 : 4000);
+        return;
+      }
+
+      this.ui.toast('AR mode off');
+      return;
+    }
+
+    this.ui.setArStatus('starting rear camera…');
+    try {
+      const res = await this.passthrough.start({
+        frontTrack: this.tracker.frontTrack,
+        onStatus: (m) => this.ui.setArStatus(m),
+      });
+
+      $('ar-video').classList.remove('hidden');
+      set({ arMode: true });
+
+      if (res.frontCameraSurvived) {
+        this.ui.setArStatus(`passthrough: ${res.label}`);
+        this.ui.toast('AR mode on — move your head to look around the model');
+      } else {
+        // The device runs one camera at a time (iOS behaves this way). AR still
+        // works as a viewer, but the head-coupled parallax is gone until AR is
+        // switched off, and saying so beats leaving a frozen model unexplained.
+        this.ui.setArStatus(
+          'This device allows only one camera at a time, so the front camera ' +
+          'stopped and head tracking is paused. Turn AR off to resume it.', 'warn');
+        this.ui.toast('AR on, but head tracking paused — this device runs one camera at a time', 5200);
+      }
+    } catch (err) {
+      console.warn('[Hologram3D] AR passthrough failed:', err);
+      set({ arMode: false });
+      this.passthrough.stop();
+      $('ar-video').classList.add('hidden');
+      this.ui.setArStatus(String(err.message || err), 'bad');
+      this.ui.toast(`AR unavailable — ${err.message || err}`, 4000);
+    }
   }
 
   toggleFullscreen() {

@@ -45,6 +45,7 @@ import {
   renderBudgetForClass,
 } from '../js/device.js';
 import { DEFAULTS, RANGES } from '../js/config.js';
+import { findRearCameraId, friendlyLabel } from '../js/passthrough.js';
 
 const out = document.getElementById('out');
 let pass = 0, fail = 0;
@@ -506,6 +507,82 @@ section('8 · Mobile — orientation, focal length, budgets');
   check('the diagonal range actually reaches phone sizes',
         RANGES.screenDiagonalInches[0] <= 5,
         `min ${RANGES.screenDiagonalInches[0]}" — a 6.1" phone must round-trip`);
+}
+
+
+/* ================================================ 9. AR PASSTHROUGH (MOBILE) */
+section('9 · AR passthrough — rear-camera selection');
+
+{
+  // enumerateDevices is stubbed so camera picking can be asserted without a
+  // phone. Labels are only populated after permission is granted, which is
+  // always true by the time AR mode can be switched on.
+  const withDevices = async (devices, fn) => {
+    const real = navigator.mediaDevices.enumerateDevices;
+    navigator.mediaDevices.enumerateDevices = async () => devices;
+    try { return await fn(); } finally { navigator.mediaDevices.enumerateDevices = real; }
+  };
+  const cam = (deviceId, label, facingMode) => ({
+    kind: 'videoinput', deviceId, label,
+    getCapabilities: facingMode ? () => ({ facingMode: [facingMode] }) : undefined,
+  });
+
+  const byCapability = await withDevices(
+    [cam('f', 'Front Camera', 'user'), cam('b', 'Back Camera', 'environment')],
+    () => findRearCameraId());
+  check('picks the rear camera from getCapabilities().facingMode',
+        byCapability === 'b', `chose "${byCapability}"`);
+
+  // Multi-lens phones expose several back cameras; the plain one is the right
+  // default, since an ultra-wide or macro would frame the scene badly.
+  const byLabel = await withDevices([
+    cam('f', 'Front Camera'),
+    cam('b-ultra', 'Back Ultra Wide Camera'),
+    cam('b-main', 'Back Camera'),
+  ], () => findRearCameraId());
+  check('prefers the plain back camera over ultra-wide / macro lenses',
+        byLabel === 'b-main', `chose "${byLabel}"`);
+
+  const single = await withDevices([cam('f', 'Front Camera', 'user')], () => findRearCameraId());
+  check('a single-camera device yields no rear camera', single === null);
+
+  const noLabels = await withDevices(
+    [cam('f', ''), cam('b', '')], () => findRearCameraId());
+  check('unlabelled devices with no capabilities fall through to null',
+        noLabels === null, 'the caller then falls back to facingMode constraints');
+
+  // A raw track label is not guaranteed to be human-readable.
+  check('opaque base64 track labels are replaced, not shown',
+        friendlyLabel('tQ7Wb3755UVtqJjaK34pvah/NNxPAzHu18TERmu4EzH9Op==') === 'rear camera');
+  check('real camera names are preserved',
+        friendlyLabel('Back Camera') === 'Back Camera');
+  check('an empty label falls back to a generic name',
+        friendlyLabel('') === 'rear camera' && friendlyLabel(undefined) === 'rear camera');
+  check('very long labels are truncated rather than breaking the panel',
+        friendlyLabel('camera2 0, facing back, extremely verbose vendor string here').length <= 36);
+}
+
+{
+  // AR must OVERRIDE the set-dressing toggles, never overwrite them: switching
+  // AR off has to restore exactly what the user had chosen.
+  const visibilityUnder = (cfg) => ({
+    room:  !cfg.arMode && cfg.showRoom,
+    frame: !cfg.arMode && cfg.showFrame,
+    props: !cfg.arMode && cfg.showProps,
+  });
+
+  const chosen = { showRoom: true, showFrame: false, showProps: true };
+  const off = visibilityUnder({ ...chosen, arMode: false });
+  const on  = visibilityUnder({ ...chosen, arMode: true });
+
+  check('AR hides every set piece regardless of user settings',
+        !on.room && !on.frame && !on.props);
+  check('turning AR off restores the exact prior visibility',
+        off.room === chosen.showRoom && off.frame === chosen.showFrame && off.props === chosen.showProps,
+        'room on, frame off, props on — preserved through an AR round trip');
+
+  check('arMode ships off by default', DEFAULTS.arMode === false,
+        'AR needs a second camera and a fresh gesture, so it never auto-restores');
 }
 
 /* ================================================================= SUMMARY */

@@ -63,7 +63,10 @@ export class HologramScene {
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
-      alpha: false,
+      // Alpha is enabled unconditionally: AR passthrough needs to clear the
+      // canvas to transparent so the rear-camera video shows through, and the
+      // backing store's format cannot be changed after construction.
+      alpha: true,
       powerPreference: 'high-performance',
       stencil: false,
     });
@@ -75,7 +78,8 @@ export class HologramScene {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x05070c);
+    this.opaqueBackground = new THREE.Color(0x05070c);
+    this.scene.background = this.opaqueBackground;
 
     // A plain PerspectiveCamera whose projectionMatrix we overwrite each frame.
     // Never call `updateProjectionMatrix()` on it — that would rebuild a
@@ -191,10 +195,32 @@ export class HologramScene {
     this.applyVisibility();
   }
 
+  /**
+   * AR mode hides all set dressing, but as an OVERRIDE rather than by rewriting
+   * the user's settings — switching AR off must restore exactly what they had.
+   */
   applyVisibility() {
-    this.depthBox.visible = this.cfg.showRoom;
-    this.windowFrame.visible = this.cfg.showFrame;
-    this.props.visible = this.cfg.showProps;
+    const ar = this.cfg.arMode;
+    this.depthBox.visible = !ar && this.cfg.showRoom;
+    this.windowFrame.visible = !ar && this.cfg.showFrame;
+    this.props.visible = !ar && this.cfg.showProps;
+  }
+
+  /**
+   * Switch between the diorama and AR passthrough.
+   *
+   * In AR the canvas is cleared to full transparency and the scene background
+   * is dropped, so the rear-camera <video> sitting behind the canvas shows
+   * through. Shadows are also switched off: the only shadow receivers were the
+   * depth box and the floor, both of which are now hidden, so every shadow-map
+   * pass would be spent rendering a shadow nothing can catch.
+   */
+  setTransparent(on) {
+    this.scene.background = on ? null : this.opaqueBackground;
+    this.renderer.setClearColor(0x000000, on ? 0 : 1);
+    this.renderer.shadowMap.enabled = this.cfg.shadows && !on;
+    this.applyVisibility();
+    this.scene.traverse((o) => { if (o.isMesh && o.material) o.material.needsUpdate = true; });
   }
 
   /** Resize the drawing buffer to the CSS box. */
@@ -241,10 +267,11 @@ export class HologramScene {
   onConfigChange(keys) {
     const has = (...k) => k.some((x) => keys.includes(x));
     if (has('exposure')) this.renderer.toneMappingExposure = this.cfg.exposure;
-    if (has('shadows')) {
-      this.renderer.shadowMap.enabled = this.cfg.shadows;
+    if (has('shadows', 'arMode')) {
+      this.renderer.shadowMap.enabled = this.cfg.shadows && !this.cfg.arMode;
       this.scene.traverse((o) => { if (o.isMesh && o.material) o.material.needsUpdate = true; });
     }
+    if (has('arMode')) this.setTransparent(this.cfg.arMode);
     if (has('roomDepthCm')) this._rebuildStage();
     if (has('showRoom', 'showFrame', 'showProps')) this.applyVisibility();
     if (has('modelSizeCm', 'modelDepthCm', 'modelHeightCm')) this._placeModel();

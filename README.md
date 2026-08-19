@@ -26,6 +26,7 @@ first load there are **no network requests at all** — every dependency is vend
 - [Running it](#running-it)
 - [Offline by default](#offline-by-default)
 - [On a phone](#on-a-phone)
+- [AR passthrough mode](#ar-passthrough-mode)
 - [Deploying to GitHub Pages](#deploying-to-github-pages)
 - [How it works](#how-it-works)
 - [Calibration](#calibration)
@@ -152,6 +153,62 @@ Beyond that, three mobile-specific things happen:
 
 iOS has no Fullscreen API on iPhone. Use **Share → Add to Home Screen** and launch from
 there; the app ships the meta tags for a fullscreen standalone shell.
+
+---
+
+## AR passthrough mode
+
+**Phones and tablets only.** Toggle **Transparent AR mode** in the panel and the diorama
+disappears — no depth box, no window frame, no parallax props. The canvas clears to
+transparent, your **rear camera** fills the background, and the model is left floating in
+your actual room, still driven by head tracking.
+
+<img src="docs/ar-mode.png" alt="AR passthrough in portrait and landscape on a phone" width="700" />
+
+The control only appears on non-desktop devices, and AR always starts **off** — it needs a
+second camera and a fresh gesture, so restoring it automatically would be wrong.
+
+### It needs two cameras at once
+
+This is the part worth understanding before you try it. AR mode runs the **front** camera
+(face tracking — the whole point of the app) and the **rear** camera (the background)
+*simultaneously*. Whether that is allowed is a platform decision you cannot feature-detect
+up front:
+
+| Platform | Behaviour |
+|---|---|
+| Most modern Android + Chrome | Both streams coexist. Full AR with live head tracking. |
+| iOS Safari | Opening the rear camera generally **stops** the front one. |
+
+On iOS the front track silently goes to `ended` — nothing throws, and a naive implementation
+would just leave the model frozen with no explanation. So the app acquires the rear stream,
+waits, then **checks whether the front track survived**, and says plainly what happened:
+
+> This device allows only one camera at a time, so the front camera stopped and head
+> tracking is paused. Turn AR off to resume it.
+
+And that message is true: switching AR off **reopens the front camera** and tracking resumes.
+(Stopping the rear stream does not bring the front one back on its own — it has to be
+re-acquired, and the video element's frame clock reset, or every subsequent frame is skipped.)
+
+### Details
+
+- On multi-lens phones the rear camera is chosen by `getCapabilities().facingMode` first,
+  then by label — deliberately preferring the plain back camera over ultra-wide, macro and
+  telephoto lenses, which frame a room badly.
+- Shadows are switched off in AR: the only shadow receivers were the depth box and its
+  floor, both now hidden, so every shadow-map pass would be rendering a shadow nothing can
+  catch.
+- Your Scene toggles are **overridden, not overwritten** — switching AR off restores exactly
+  the set-dressing you had.
+- The rear feed uses `object-fit: cover`, since the sensor aspect rarely matches the viewport
+  and letterboxing would break the see-through illusion.
+
+> Tested with synthetic dual-camera streams (including a simulated single-camera device) via
+> `tests/mobile.html`, which stubs both cameras and has a **Toggle AR passthrough** button.
+> The camera-selection and label-sanitising logic is covered by the geometry suite. It has
+> **not** been run on physical hardware — if the rear camera picks an odd lens on your phone,
+> that is the first thing to check.
 
 ---
 
@@ -334,9 +391,9 @@ this is not optional.
 
 ## Tests
 
-`tests/test.html` covers the geometry the illusion depends on — **54 assertions** over the
+`tests/test.html` covers the geometry the illusion depends on — **65 assertions** over the
 frustum, parallax direction, counter-rotation sign, landmark-to-world conversion, the offset
-chain, mobile orientation handling, the 1€ filter, and config persistence.
+chain, mobile orientation handling, AR camera selection, the 1€ filter, and config persistence.
 
 ```bash
 python serve.py
@@ -372,6 +429,7 @@ js/
   scene.js            three.js scene, model loading, counter-rotation, adaptive resolution
   device.js           device class, physical defaults, orientation-aware camera position
   tracker.js          camera + MediaPipe FaceLandmarker
+  passthrough.js      rear-camera AR background, with dual-camera detection
   stagecraft.js       depth box, window frame, parallax props
   filters.js          1€ filter
   config.js           persisted, range-validated settings
@@ -406,6 +464,9 @@ first run (with fallback hosts) and are then browser-cached; the rest is local.
 | Settings in a strange state | **Reset settings** in the panel. Out-of-range persisted values are also dropped automatically on load. |
 | Console warns "vendor/ is missing or incomplete" | Run `node tools/vendor.mjs`. The app fell back to a CDN and is no longer offline-capable. |
 | Blank page on GitHub Pages | Confirm `.nojekyll` is committed and Pages is serving `/ (root)` of `main`. |
+| AR mode says head tracking is paused | Your device runs one camera at a time (iOS). Turn AR off to resume tracking. |
+| AR mode picks a fisheye/ultra-wide lens | Multi-lens phone. Report the camera label — lens preference is in `js/passthrough.js`. |
+| No AR toggle | It is hidden on desktop; there is no rear camera to pass through. |
 
 ---
 

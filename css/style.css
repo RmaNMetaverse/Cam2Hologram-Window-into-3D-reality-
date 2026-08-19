@@ -53,6 +53,21 @@ button, input { font-family: inherit; }
   height: 100%;
   display: block;
   touch-action: none;
+  z-index: 1;             /* above the AR passthrough video */
+}
+
+/* Rear-camera feed for AR mode. Sits underneath the canvas, which clears to
+   transparent while AR is on. `cover` because the sensor aspect rarely matches
+   the viewport and letterboxing would break the illusion of a see-through. */
+.ar-video {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+  pointer-events: none;
 }
 
 .hidden { display: none !important; }

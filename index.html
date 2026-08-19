@@ -28,6 +28,10 @@
 </head>
 <body>
 
+<!-- ============ AR PASSTHROUGH BACKGROUND ============ -->
+<!-- Rear-camera feed, painted behind the (transparent) canvas in AR mode. -->
+<video id="ar-video" class="ar-video hidden" playsinline autoplay muted disablepictureinpicture></video>
+
 <!-- ============ 3D VIEWPORT ============ -->
 <canvas id="stage"></canvas>
 
@@ -123,6 +127,19 @@
       <label class="check">
         <input type="checkbox" id="c-invert" /> <span>Invert direction (same&#8209;side rotation)</span>
       </label>
+    </section>
+
+    <!-- ---- AR passthrough (mobile only) ---- -->
+    <section class="group hidden" id="group-ar">
+      <h3>AR passthrough <small>(rear camera)</small></h3>
+      <label class="check">
+        <input type="checkbox" id="c-ar" /> <span>Transparent AR mode</span>
+      </label>
+      <p class="hint" id="ar-hint">
+        Drops the depth box, frame and props, and shows your <b>rear camera</b> behind the
+        model &mdash; so it sits in your actual room. Head tracking keeps driving it.
+      </p>
+      <div id="ar-status" class="readout hidden"></div>
     </section>
 
     <!-- ---- Model ---- -->

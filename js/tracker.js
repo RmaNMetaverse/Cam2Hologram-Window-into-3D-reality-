@@ -86,6 +86,15 @@ export class HeadTracker {
   get videoWidth() { return this.video.videoWidth || 0; }
   get videoHeight() { return this.video.videoHeight || 0; }
 
+  /** The face-tracking track, so AR mode can verify it survived a second camera. */
+  get frontTrack() { return this.stream?.getVideoTracks()[0] || null; }
+
+  /** True while the front camera is genuinely delivering frames. */
+  get frontIsLive() {
+    const t = this.frontTrack;
+    return !!t && t.readyState === 'live' && !t.muted;
+  }
+
   /**
    * Request the webcam and build the landmarker.
    * @param {{useGpu?:boolean, onStatus?:(s:string)=>void}} opts
@@ -97,19 +106,7 @@ export class HeadTracker {
       throw new Error('getUserMedia is unavailable — serve the page over http://localhost or https://');
     }
 
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {
-        width:  { ideal: 1280 },
-        height: { ideal: 720 },
-        frameRate: { ideal: 30, max: 60 },
-        facingMode: 'user',
-      },
-    });
-
-    this.video.srcObject = this.stream;
-    await this.video.play();
-    await this._waitForMetadata();
+    await this._openCamera();
 
     const vision = await loadVisionBundle(onStatus);
     const { FaceLandmarker, FilesetResolver } = vision;
@@ -159,6 +156,49 @@ export class HeadTracker {
     this.running = true;
     onStatus?.('tracking');
     return this;
+  }
+
+  /**
+   * Open (or re-open) the front camera and bind it to the video element.
+   * Split out of `start()` so it can be called again after AR mode's second
+   * camera has forced this one closed on a single-camera device.
+   */
+  async _openCamera() {
+    for (const t of this.stream?.getTracks() || []) t.stop();
+
+    this.stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        width:  { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 30, max: 60 },
+        facingMode: 'user',
+      },
+    });
+
+    this.video.srcObject = this.stream;
+    await this.video.play();
+    await this._waitForMetadata();
+
+    // The new stream restarts its clock, so the previous frame timestamp would
+    // never be beaten and `poll` would skip every frame forever.
+    this.lastVideoTime = -1;
+  }
+
+  /**
+   * Re-acquire the front camera after something else closed it. The landmarker
+   * itself is untouched — it holds no reference to the stream, only to frames
+   * handed to it — so tracking simply resumes.
+   */
+  async restartCamera() {
+    if (this.frontIsLive) return true;
+    try {
+      await this._openCamera();
+      return true;
+    } catch (err) {
+      console.warn('[Hologram3D] could not reopen the front camera:', err);
+      return false;
+    }
   }
 
   _waitForMetadata() {

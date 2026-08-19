@@ -28,6 +28,7 @@ const BINDINGS = [
   ['c-spin',      'autoSpin',             'check'],
   ['c-anim',      'playAnimations',       'check'],
 
+  ['c-ar',        'arMode',               'check'],
   ['c-room',      'showRoom',             'check'],
   ['c-frame',     'showFrame',            'check'],
   ['c-props',     'showProps',            'check'],
@@ -91,6 +92,21 @@ export class UI {
     if (this.isCompact()) this.togglePanel(false);
   }
 
+  /** Show the AR passthrough control. Desktops have no rear camera. */
+  enableArControl(show) {
+    $('group-ar').classList.toggle('hidden', !show);
+  }
+
+  /** Persistent line under the AR toggle; pass null to clear. */
+  setArStatus(text, kind = '') {
+    const el = $('ar-status');
+    el.classList.toggle('hidden', !text);
+    el.textContent = text || '';
+    el.style.color = kind === 'warn' ? 'var(--warn)'
+                   : kind === 'bad' ? 'var(--bad)'
+                   : 'var(--muted)';
+  }
+
   /** True when the panel occupies the whole viewport rather than sitting beside it. */
   isCompact() {
     return window.matchMedia('(max-width: 760px)').matches || isTouchDevice();
@@ -106,6 +122,10 @@ export class UI {
       const label = labelId ? $(labelId) : null;
       const entry = { el, key, kind, label, fmt };
       this.widgets.push(entry);
+
+      // AR mode owns its own handler in _bindButtons: it must open a camera,
+      // may fail, and only then may config change.
+      if (key === 'arMode') continue;
 
       el.addEventListener('input', () => {
         const value = kind === 'check' ? el.checked : parseFloat(el.value);
@@ -136,6 +156,17 @@ export class UI {
         if (w.label) w.label.textContent = w.fmt ? w.fmt(v) : String(v);
       }
     }
+    // AR passthrough overrides all set dressing, so those toggles are inert.
+    if (!keys || keys.includes('arMode')) {
+      const ar = config.arMode;
+      for (const id of ['c-room', 'c-frame', 'c-props']) {
+        const el = $(id);
+        if (!el) continue;
+        el.disabled = ar;
+        el.closest('.check').style.opacity = ar ? 0.4 : 1;
+      }
+    }
+
     // Both camera-offset sliders are meaningless while "auto" is on: the
     // position is derived from the display size and the device orientation.
     if (!keys || keys.includes('camOffsetAuto') ||
@@ -168,6 +199,19 @@ export class UI {
       if (f) this.h.onLoadFile(f);
       fileInput.value = '';
     };
+
+    const ar = $('c-ar');
+    ar.addEventListener('change', async () => {
+      const wanted = ar.checked;
+      ar.disabled = true;
+      try {
+        await this.h.onToggleAr(wanted);
+      } finally {
+        ar.disabled = false;
+        // Whatever happened, the checkbox must reflect reality, not intent.
+        this.syncFromConfig(['arMode']);
+      }
+    });
 
     $('btn-default').onclick = () => this.h.onLoadDefault();
     $('btn-recenter').onclick = () => this.h.onRecenter();

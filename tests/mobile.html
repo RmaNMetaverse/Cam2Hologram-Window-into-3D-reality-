@@ -45,6 +45,7 @@
 <div class="bar">
   <button id="btn-run">Load &amp; start both frames</button>
   <button id="btn-probe">Probe layout</button>
+  <button id="btn-ar">Toggle AR passthrough</button>
 </div>
 
 <div class="stage">
@@ -80,16 +81,48 @@ function preparePhone(win, { screenW, screenH, angle }) {
     Object.defineProperty(win.screen.orientation, 'angle', { value: angle, configurable: true });
   } catch { /* some engines make this non-configurable; the offset test covers the maths */ }
 
-  // Portrait sensor feed, as a phone actually delivers it.
-  const c = win.document.createElement('canvas');
-  c.width = 720; c.height = 1280;
-  const ctx = c.getContext('2d');
-  win.setInterval(() => {
+  // Two synthetic cameras: a portrait "face" feed for tracking, and a rear feed
+  // so AR passthrough can be exercised without a phone.
+  const mk = (w, h, draw) => {
+    const c = win.document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    win.setInterval(() => draw(ctx), 40);
+    return c;
+  };
+
+  const front = mk(720, 1280, (ctx) => {
     ctx.fillStyle = '#203040'; ctx.fillRect(0, 0, 720, 1280);
     ctx.fillStyle = '#c9a';
     ctx.beginPath(); ctx.ellipse(360, 640, 150, 200, 0, 0, 7); ctx.fill();
-  }, 33);
-  win.navigator.mediaDevices.getUserMedia = async () => c.captureStream(30);
+  });
+
+  let t = 0;
+  const rear = mk(1920, 1080, (ctx) => {
+    t += 0.015;
+    const g = ctx.createLinearGradient(0, 0, 0, 1080);
+    g.addColorStop(0, '#d9a56b'); g.addColorStop(0.5, '#9c6a44'); g.addColorStop(1, '#4e3220');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, 1920, 1080);
+    ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = 5;
+    for (let i = 0; i < 18; i++) {
+      ctx.beginPath(); ctx.moveTo(i * 120 + Math.sin(t) * 10, 0); ctx.lineTo(i * 120 + 200, 1080); ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(25,15,8,.45)'; ctx.fillRect(0, 760, 1920, 320);
+  });
+
+  win.navigator.mediaDevices.enumerateDevices = async () => ([
+    { kind: 'videoinput', deviceId: 'front-1', label: 'Front Camera',
+      getCapabilities: () => ({ facingMode: ['user'] }) },
+    { kind: 'videoinput', deviceId: 'rear-1', label: 'Back Camera',
+      getCapabilities: () => ({ facingMode: ['environment'] }) },
+  ]);
+
+  win.navigator.mediaDevices.getUserMedia = async (constraints) => {
+    const id = constraints?.video?.deviceId?.exact;
+    const fm = constraints?.video?.facingMode;
+    const wantsRear = id === 'rear-1' || fm === 'environment' || fm?.exact === 'environment';
+    return (wantsRear ? rear : front).captureStream(30);
+  };
 
   // Local calibration must not leak between the two frames.
   // (storage is cleared by loadFrame, before this frame's modules evaluate)
@@ -121,6 +154,24 @@ document.getElementById('btn-run').onclick = async () => {
   const l = await loadFrame('f-landscape', { screenW: 844, screenH: 390, angle: 90 });
   window.__frames = { portrait: p, landscape: l };
   log('both frames running.', 'ok');
+};
+
+document.getElementById('btn-ar').onclick = async () => {
+  const frames = window.__frames;
+  if (!frames) return log('run the frames first', 'bad');
+  for (const [name, win] of Object.entries(frames)) {
+    const box = win.document.getElementById('c-ar');
+    if (!box) { log(`${name}: no AR control`, 'bad'); continue; }
+    box.checked = !box.checked;
+    box.dispatchEvent(new win.Event('change'));
+  }
+  await new Promise((r) => setTimeout(r, 2500));
+  for (const [name, win] of Object.entries(frames)) {
+    const a = win.hologram;
+    log(`${name}: arMode=${a.scene.cfg.arMode} ` +
+        `setDressingHidden=${!a.depthBox?.visible && !a.scene.depthBox.visible} ` +
+        `status="${win.document.getElementById('ar-status').textContent}"`);
+  }
 };
 
 document.getElementById('btn-probe').onclick = () => {

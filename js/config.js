@@ -28,6 +28,9 @@ export const DEFAULTS = {
   playAnimations: true,
 
   /* ---- scene ---- */
+  // AR passthrough. Not persisted as "on" across devices in any meaningful way,
+  // but kept here so the whole config plumbing (sync, listeners) applies to it.
+  arMode: false,
   showRoom: true,
   showFrame: true,
   showProps: true,
