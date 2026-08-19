@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Hologram3D — responsive preview</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 20px 24px 40px;
+    background: #0a0e16; color: #dde4f0;
+    font: 13px/1.6 ui-monospace, Consolas, monospace;
+  }
+  h1 { font-size: 15px; color: #4fd1ff; margin: 0 0 4px; letter-spacing: .04em; }
+  .note { color: #67748c; max-width: 78ch; margin-bottom: 18px; }
+  .note b { color: #ffcc5c; font-weight: 600; }
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+  button {
+    padding: 8px 14px; border: 1px solid rgba(255,255,255,.16); border-radius: 8px;
+    background: rgba(255,255,255,.05); color: #dde4f0; font: inherit; cursor: pointer;
+  }
+  button:hover { border-color: #4fd1ff; color: #fff; }
+  .stage { display: flex; gap: 26px; align-items: flex-start; flex-wrap: wrap; }
+  figure { margin: 0; }
+  figcaption { margin-top: 8px; color: #8792a8; font-size: 11.5px; }
+  .device {
+    border: 10px solid #14181f; border-radius: 26px; overflow: hidden;
+    box-shadow: 0 24px 60px -20px #000; background: #000; display: block;
+  }
+  iframe { border: 0; display: block; }
+  #log { margin-top: 22px; white-space: pre-wrap; color: #8792a8; font-size: 11.5px; }
+  .ok { color: #45e39a; } .bad { color: #ff6b6b; }
+</style>
+</head>
+<body>
+
+<h1>◈ Responsive preview</h1>
+<p class="note">
+  Loads the real app inside phone-sized frames. CSS media queries resolve against the
+  <em>iframe</em> viewport, so this exercises the actual mobile layout without a device.
+  A synthetic portrait camera stream is injected, and <code>screen</code>/<code>maxTouchPoints</code>
+  are spoofed, so the app profiles itself as a phone.
+  <b>This is a development harness, not part of the app.</b>
+</p>
+
+<div class="bar">
+  <button id="btn-run">Load &amp; start both frames</button>
+  <button id="btn-probe">Probe layout</button>
+</div>
+
+<div class="stage">
+  <figure>
+    <div class="device"><iframe id="f-portrait" width="390" height="844"
+      allow="camera; fullscreen" src="about:blank"></iframe></div>
+    <figcaption>iPhone-class portrait — 390 × 844</figcaption>
+  </figure>
+  <figure>
+    <div class="device"><iframe id="f-landscape" width="844" height="390"
+      allow="camera; fullscreen" src="about:blank"></iframe></div>
+    <figcaption>same device, landscape — 844 × 390 (camera moves to the side)</figcaption>
+  </figure>
+</div>
+
+<div id="log"></div>
+
+<script>
+const log = (msg, cls = '') =>
+  document.getElementById('log').insertAdjacentHTML('beforeend',
+    `<div class="${cls}">${msg}</div>`);
+
+/**
+ * Spoof a phone inside the frame, then start the app.
+ * The app only builds itself on the start click, so overrides installed after
+ * `load` still land before any device detection runs.
+ */
+function preparePhone(win, { screenW, screenH, angle }) {
+  Object.defineProperty(win.screen, 'width',  { value: screenW, configurable: true });
+  Object.defineProperty(win.screen, 'height', { value: screenH, configurable: true });
+  Object.defineProperty(win.navigator, 'maxTouchPoints', { value: 5, configurable: true });
+  try {
+    Object.defineProperty(win.screen.orientation, 'angle', { value: angle, configurable: true });
+  } catch { /* some engines make this non-configurable; the offset test covers the maths */ }
+
+  // Portrait sensor feed, as a phone actually delivers it.
+  const c = win.document.createElement('canvas');
+  c.width = 720; c.height = 1280;
+  const ctx = c.getContext('2d');
+  win.setInterval(() => {
+    ctx.fillStyle = '#203040'; ctx.fillRect(0, 0, 720, 1280);
+    ctx.fillStyle = '#c9a';
+    ctx.beginPath(); ctx.ellipse(360, 640, 150, 200, 0, 0, 7); ctx.fill();
+  }, 33);
+  win.navigator.mediaDevices.getUserMedia = async () => c.captureStream(30);
+
+  // Local calibration must not leak between the two frames.
+  // (storage is cleared by loadFrame, before this frame's modules evaluate)
+}
+
+function loadFrame(id, opts) {
+  return new Promise((resolve) => {
+    const f = document.getElementById(id);
+    // Both frames are same-origin, so they share ONE localStorage. Clearing it
+    // here — from the parent, before the frame's modules evaluate — is the only
+    // point at which it reliably takes effect, since config.js snapshots
+    // storage at import time.
+    try { localStorage.removeItem('hologram3d.config.v1'); } catch {}
+    f.onload = () => {
+      const win = f.contentWindow;
+      preparePhone(win, opts);
+      win.document.getElementById('btn-start').click();
+      setTimeout(() => resolve(win), 11000);
+    };
+    f.src = '../index.html?frame=' + id;
+  });
+}
+
+document.getElementById('btn-run').onclick = async () => {
+  document.getElementById('log').innerHTML = '';
+  log('loading…');
+  // Sequential: parallel loads race over the shared localStorage.
+  const p = await loadFrame('f-portrait',  { screenW: 390, screenH: 844, angle: 0 });
+  const l = await loadFrame('f-landscape', { screenW: 844, screenH: 390, angle: 90 });
+  window.__frames = { portrait: p, landscape: l };
+  log('both frames running.', 'ok');
+};
+
+document.getElementById('btn-probe').onclick = () => {
+  const frames = window.__frames;
+  if (!frames) return log('run the frames first', 'bad');
+  for (const [name, win] of Object.entries(frames)) {
+    const a = win.hologram;
+    if (!a) { log(`${name}: app not started`, 'bad'); continue; }
+    const L = a.layout;
+    log(`${name}: class=${a.deviceClass} diag=${win.innerWidth}×${win.innerHeight} ` +
+        `canvas=${L.canvasWidthCm.toFixed(1)}×${L.canvasHeightCm.toFixed(1)}cm ` +
+        `camera=(${L.cameraOffset.x.toFixed(1)}, ${L.cameraOffset.y.toFixed(1)})cm ` +
+        `angle=${L.orientationAngle}° dpr=${a.scene.pixelRatio.toFixed(2)} ` +
+        `panelCollapsed=${win.document.getElementById('panel').classList.contains('collapsed')}`);
+  }
+};
+</script>
+</body>
+</html>

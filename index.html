@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#05070c" />
+<meta name="description" content="Turn any webcam into a window into 3D space — head-tracked off-axis projection in the browser." />
+<!-- Lets iOS run the page as a fullscreen shell from the home screen, which is
+     the only way to get fullscreen on an iPhone. -->
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Hologram3D" />
+<title>HeadTracking Hologram3D</title>
+<link rel="stylesheet" href="css/style.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🪞</text></svg>" />
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<!-- ============ 3D VIEWPORT ============ -->
+<canvas id="stage"></canvas>
+
+<!-- ============ SPLASH / PERMISSION GATE ============ -->
+<div id="splash" class="splash">
+  <div class="splash-card">
+    <div class="logo">
+      <span class="logo-glyph">◈</span>
+      <div>
+        <h1>HeadTracking <em>Hologram3D</em></h1>
+        <p class="tag">Turn any webcam into a window into 3D space.</p>
+      </div>
+    </div>
+
+    <p class="blurb">
+      MediaPipe Face Mesh tracks your eyes and head in real space. The scene is then rendered with an
+      <strong>off&#8209;axis (asymmetric) projection</strong> locked to your eye position, so the model
+      counter&#8209;rotates against your movement &mdash; move left and its right side swings toward you,
+      exactly like a real object sitting in front of your monitor.
+    </p>
+
+    <ul class="checklist">
+      <li><span>1</span> Allow camera access when prompted.</li>
+      <li><span>2</span> Set your screen size in <em>Calibration</em> for a correct illusion.</li>
+      <li><span>3</span> Close one eye &mdash; the effect is strongest monocular.</li>
+    </ul>
+
+    <button id="btn-start" class="primary">Enable camera &amp; start</button>
+    <div id="splash-status" class="splash-status">Ready.</div>
+    <div class="fineprint">Nothing leaves your machine &mdash; all tracking runs locally in the browser.</div>
+  </div>
+</div>
+
+<!-- ============ HUD (top-left) ============ -->
+<div id="hud" class="hud hidden">
+  <div class="hud-row"><b id="hud-fps">--</b><span>fps render</span></div>
+  <div class="hud-row"><b id="hud-tfps">--</b><span>fps track</span></div>
+  <div class="hud-row" id="hud-state-row"><b id="hud-state" class="bad">no face</b><span>tracking</span></div>
+  <hr />
+  <div class="hud-row"><b id="hud-x">0.0</b><span>head X cm</span></div>
+  <div class="hud-row"><b id="hud-y">0.0</b><span>head Y cm</span></div>
+  <div class="hud-row"><b id="hud-z">0.0</b><span>head Z cm</span></div>
+  <hr />
+  <div class="hud-row"><b id="hud-yaw">0</b><span>yaw &deg;</span></div>
+  <div class="hud-row"><b id="hud-pitch">0</b><span>pitch &deg;</span></div>
+  <div class="hud-row"><b id="hud-roll">0</b><span>roll &deg;</span></div>
+</div>
+
+<!-- ============ CAMERA PREVIEW (bottom-left) ============ -->
+<div id="preview" class="preview hidden">
+  <video id="video" playsinline autoplay muted disablepictureinpicture></video>
+  <canvas id="overlay"></canvas>
+  <div class="preview-bar">
+    <span id="preview-label">face mesh</span>
+    <button id="btn-preview-collapse" title="Hide preview">&minus;</button>
+  </div>
+</div>
+
+<!-- ============ CONTROL PANEL (right) ============ -->
+<aside id="panel" class="panel hidden">
+  <header class="panel-head">
+    <h2>◈ Hologram3D</h2>
+    <button id="btn-panel-toggle" title="Collapse panel (H)">&raquo;</button>
+  </header>
+
+  <div class="panel-body">
+
+    <!-- ---- Illusion mode ---- -->
+    <section class="group">
+      <h3>Illusion mode</h3>
+      <div class="segmented" id="mode-seg">
+        <button data-mode="window">Window</button>
+        <button data-mode="hybrid" class="active">Hybrid</button>
+        <button data-mode="turntable">Turntable</button>
+      </div>
+      <p class="hint" id="mode-hint">
+        Physically correct parallax <em>plus</em> extra counter&#8209;rotation. The most convincing
+        &ldquo;it&rsquo;s floating there&rdquo; result on a normal desktop monitor.
+      </p>
+
+      <label class="slider">
+        <span>Parallax gain <i id="v-parallax">1.00</i></span>
+        <input type="range" id="s-parallax" min="0" max="3" step="0.05" value="1" />
+      </label>
+      <label class="slider">
+        <span>Counter&#8209;rotation gain <i id="v-rotation">1.00</i></span>
+        <input type="range" id="s-rotation" min="0" max="3" step="0.05" value="1" />
+      </label>
+      <label class="slider">
+        <span>Vertical influence <i id="v-vertical">1.00</i></span>
+        <input type="range" id="s-vertical" min="0" max="2" step="0.05" value="1" />
+      </label>
+      <label class="check">
+        <input type="checkbox" id="c-invert" /> <span>Invert direction (same&#8209;side rotation)</span>
+      </label>
+    </section>
+
+    <!-- ---- Model ---- -->
+    <section class="group">
+      <h3>Model</h3>
+      <div class="btn-row">
+        <button id="btn-load">Load .glb / .gltf</button>
+        <button id="btn-default">Default</button>
+      </div>
+      <input type="file" id="file-input" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" hidden />
+      <div id="model-name" class="model-name">Angel Sculpture</div>
+      <div id="model-progress" class="progress hidden"><div></div></div>
+
+      <label class="slider">
+        <span>Size <i id="v-size">22</i> cm</span>
+        <input type="range" id="s-size" min="4" max="80" step="1" value="22" />
+      </label>
+      <label class="slider">
+        <span>Depth <i id="v-depth">-6</i> cm <small>(&minus; behind screen / + in front)</small></span>
+        <input type="range" id="s-depth" min="-60" max="35" step="1" value="-6" />
+      </label>
+      <label class="slider">
+        <span>Height offset <i id="v-height">0</i> cm</span>
+        <input type="range" id="s-height" min="-25" max="25" step="1" value="0" />
+      </label>
+      <label class="slider">
+        <span>Base yaw <i id="v-baseyaw">0</i>&deg;</span>
+        <input type="range" id="s-baseyaw" min="-180" max="180" step="1" value="0" />
+      </label>
+      <label class="check"><input type="checkbox" id="c-spin" /> <span>Idle auto&#8209;spin</span></label>
+      <label class="check"><input type="checkbox" id="c-anim" checked /> <span>Play glTF animations</span></label>
+    </section>
+
+    <!-- ---- Scene ---- -->
+    <section class="group">
+      <h3>Scene</h3>
+      <label class="check"><input type="checkbox" id="c-room" checked /> <span>Depth box (sells the illusion)</span></label>
+      <label class="check"><input type="checkbox" id="c-frame" checked /> <span>Window frame</span></label>
+      <label class="check"><input type="checkbox" id="c-props" checked /> <span>Parallax reference props</span></label>
+      <label class="check"><input type="checkbox" id="c-shadow" checked /> <span>Shadows</span></label>
+      <label class="slider">
+        <span>Room depth <i id="v-roomdepth">70</i> cm</span>
+        <input type="range" id="s-roomdepth" min="20" max="160" step="5" value="70" />
+      </label>
+      <label class="slider">
+        <span>Exposure <i id="v-exposure">1.05</i></span>
+        <input type="range" id="s-exposure" min="0.2" max="3" step="0.05" value="1.05" />
+      </label>
+    </section>
+
+    <!-- ---- Calibration ---- -->
+    <section class="group">
+      <h3>Calibration <small>(physical world, cm)</small></h3>
+      <label class="slider">
+        <span>Display diagonal <i id="v-diag">24.0</i> in</span>
+        <input type="range" id="s-diag" min="3" max="90" step="0.1" value="24" />
+      </label>
+      <div class="readout" id="readout-screen">canvas &mdash;</div>
+
+      <label class="slider">
+        <span>Camera Y offset <i id="v-camy">auto</i> cm</span>
+        <input type="range" id="s-camy" min="-40" max="40" step="0.5" value="0" />
+      </label>
+      <label class="check"><input type="checkbox" id="c-camy-auto" checked /> <span>Auto (front camera position, orientation-aware)</span></label>
+
+      <label class="slider">
+        <span>Camera X offset <i id="v-camx">auto</i> cm</span>
+        <input type="range" id="s-camx" min="-40" max="40" step="0.5" value="0" />
+      </label>
+      <label class="slider">
+        <span>Camera FOV <small>(long axis)</small> <i id="v-fov">62</i>&deg;</span>
+        <input type="range" id="s-fov" min="35" max="110" step="1" value="62" />
+      </label>
+      <label class="slider">
+        <span>Your interpupillary distance <i id="v-ipd">6.3</i> cm</span>
+        <input type="range" id="s-ipd" min="5.0" max="7.6" step="0.05" value="6.3" />
+      </label>
+
+      <div class="btn-row">
+        <button id="btn-recenter">Recentre (C)</button>
+        <button id="btn-clear-recenter">Clear</button>
+      </div>
+      <p class="hint">Sit comfortably looking at the centre of the canvas, then hit <b>Recentre</b>.</p>
+    </section>
+
+    <!-- ---- Tracking ---- -->
+    <section class="group">
+      <h3>Tracking</h3>
+      <label class="slider">
+        <span>Smoothing &mdash; jitter <i id="v-mincut">1.20</i></span>
+        <input type="range" id="s-mincut" min="0.05" max="6" step="0.05" value="1.2" />
+      </label>
+      <label class="slider">
+        <span>Smoothing &mdash; lag <i id="v-beta">0.010</i></span>
+        <input type="range" id="s-beta" min="0" max="0.08" step="0.001" value="0.01" />
+      </label>
+      <label class="check"><input type="checkbox" id="c-mesh" /> <span>Draw full face tesselation</span></label>
+      <label class="check"><input type="checkbox" id="c-preview" checked /> <span>Show camera preview</span></label>
+      <label class="check"><input type="checkbox" id="c-hud" checked /> <span>Show HUD</span></label>
+      <label class="check"><input type="checkbox" id="c-gpu" checked /> <span>GPU inference (reload to apply)</span></label>
+    </section>
+
+    <section class="group">
+      <div class="btn-row">
+        <button id="btn-fullscreen">Fullscreen (F)</button>
+        <button id="btn-reset">Reset settings</button>
+      </div>
+      <p class="hint keys">
+        <b>H</b> panel &middot; <b>C</b> recentre &middot; <b>F</b> fullscreen &middot; <b>P</b> preview &middot;
+        <b>1&#8202;/&#8202;2&#8202;/&#8202;3</b> mode &middot; <b>Space</b> freeze tracking
+      </p>
+    </section>
+  </div>
+</aside>
+
+<button id="panel-reopen" class="panel-reopen hidden" title="Show panel (H)">&laquo;</button>
+
+<div id="toast" class="toast"></div>
+<div id="dropzone" class="dropzone"><div>Drop a <b>.glb</b> or <b>.gltf</b> to load it</div></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

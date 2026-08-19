@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Hologram3D — geometry tests</title>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+<style>
+  body { background:#0a0e16; color:#dde4f0; font:13px/1.6 ui-monospace,Consolas,monospace; padding:24px 28px; }
+  h1 { font-size:15px; letter-spacing:.04em; color:#4fd1ff; margin:0 0 4px; }
+  h2 { font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:#8792a8;
+       margin:22px 0 6px; border-bottom:1px solid rgba(255,255,255,.1); padding-bottom:5px; }
+  .p { color:#45e39a; } .f { color:#ff6b6b; }
+  .row { display:flex; gap:10px; } .row > i { font-style:normal; width:16px; }
+  .note { color:#67748c; margin-left:26px; }
+  #sum { margin-top:26px; padding:12px 16px; border-radius:8px; font-size:14px; }
+  .ok { background:rgba(69,227,154,.12); border:1px solid rgba(69,227,154,.4); color:#45e39a; }
+  .bad{ background:rgba(255,107,107,.12); border:1px solid rgba(255,107,107,.4); color:#ff6b6b; }
+</style>
+</head>
+<body>
+<h1>◈ HeadTracking Hologram3D — geometry test suite</h1>
+<div class="note">Verifies the maths that the illusion depends on. Open via the local server.</div>
+<div id="out"></div>
+<div id="sum"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import {
+  eyeFromLandmarks,
+  eyeToCanvasSpace,
+  applyOffAxisProjection,
+  headAnglesFromMatrix,
+} from '../js/geometry.js';
+import { OneEuroFilter } from '../js/filters.js';
+import {
+  cameraOffsetForOrientation,
+  defaultsForClass,
+  renderBudgetForClass,
+} from '../js/device.js';
+import { DEFAULTS, RANGES } from '../js/config.js';
+
+const out = document.getElementById('out');
+let pass = 0, fail = 0;
+
+const section = (t) => out.insertAdjacentHTML('beforeend', `<h2>${t}</h2>`);
+function check(name, cond, detail = '') {
+  const ok = !!cond;
+  ok ? pass++ : fail++;
+  out.insertAdjacentHTML('beforeend',
+    `<div class="row"><i class="${ok ? 'p' : 'f'}">${ok ? '✓' : '✕'}</i><span>${name}</span></div>` +
+    (detail ? `<div class="note">${detail}</div>` : ''));
+}
+const near = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
+
+/* ---------------------------------------------------------------- helpers */
+
+const W = 53, H = 30;                       // window size in cm
+const NEAR = 1, FAR = 4000;
+
+function makeCamera() {
+  const c = new THREE.PerspectiveCamera(50, W / H, NEAR, FAR);
+  c.matrixAutoUpdate = true;
+  return c;
+}
+
+/** Project a world point to NDC through the off-axis camera at `eye`. */
+function project(eye, point) {
+  const cam = makeCamera();
+  applyOffAxisProjection(cam, eye, W, H, NEAR, FAR);
+  cam.updateMatrixWorld(true);
+  return new THREE.Vector3(...point).project(cam);
+}
+
+/* ============================================================== 1. FRUSTUM */
+section('1 · Off-axis frustum — the window stays pinned');
+
+{
+  // The defining property: whatever the eye does, the four corners of the
+  // physical window must land exactly on the four corners of the viewport.
+  // If this ever drifts, the "hole in the wall" becomes a wobbling picture.
+  const corners = [[-W/2, -H/2, 0], [W/2, -H/2, 0], [-W/2, H/2, 0], [W/2, H/2, 0]];
+  const eyes = [
+    { x: 0,   y: 0,   z: 60 },
+    { x: 22,  y: 11,  z: 45 },
+    { x: -30, y: -14, z: 80 },
+    { x: 5,   y: -25, z: 30 },
+  ];
+  let worst = 0;
+  for (const eye of eyes) {
+    for (const c of corners) {
+      const p = project(eye, c);
+      worst = Math.max(worst, Math.abs(Math.abs(p.x) - 1), Math.abs(Math.abs(p.y) - 1));
+    }
+  }
+  check('window corners map to viewport corners for every eye position',
+        worst < 1e-5, `worst NDC error across 4 eyes × 4 corners: ${worst.toExponential(2)}`);
+}
+
+{
+  // On-axis, the frustum must be symmetric — i.e. identical to a plain
+  // PerspectiveCamera. This is the sanity anchor for everything else.
+  const eye = { x: 0, y: 0, z: 60 };
+  const cam = makeCamera();
+  applyOffAxisProjection(cam, eye, W, H, NEAR, FAR);
+  const m = cam.projectionMatrix.elements;
+  check('on-axis frustum is symmetric (no shear terms)',
+        near(m[8], 0, 1e-9) && near(m[9], 0, 1e-9),
+        `m[8]=${m[8].toExponential(1)}  m[9]=${m[9].toExponential(1)}`);
+
+  const ref = new THREE.PerspectiveCamera(
+    2 * Math.atan((H / 2) / 60) * 180 / Math.PI, W / H, NEAR, FAR);
+  ref.updateProjectionMatrix();
+  const diff = Math.max(...cam.projectionMatrix.elements.map((v, i) =>
+    Math.abs(v - ref.projectionMatrix.elements[i])));
+  check('on-axis frustum equals an equivalent PerspectiveCamera',
+        diff < 1e-6, `max element difference: ${diff.toExponential(2)}`);
+}
+
+{
+  const cam = makeCamera();
+  applyOffAxisProjection(cam, { x: 18, y: -7, z: 50 }, W, H, NEAR, FAR);
+  check('camera is translated but never rotated',
+        cam.quaternion.equals(new THREE.Quaternion()) &&
+        near(cam.position.x, 18) && near(cam.position.y, -7) && near(cam.position.z, 50),
+        `position=(${cam.position.x}, ${cam.position.y}, ${cam.position.z}), quaternion=identity`);
+}
+
+/* ============================================================= 2. PARALLAX */
+section('2 · Parallax direction — behind vs. in front of the glass');
+
+{
+  // Through a real window, distant things drift WITH you and near things drift
+  // AGAINST you. Getting this backwards is the classic sign-error in
+  // head-coupled rendering, and it makes the scene feel "inside out".
+  const behind = [0, 0, -100];   // 100 cm behind the screen
+  const front  = [0, 0, 20];     // 20 cm in front of the screen
+
+  const b0 = project({ x: 0,  y: 0, z: 60 }, behind).x;
+  const b1 = project({ x: 12, y: 0, z: 60 }, behind).x;
+  check('object BEHIND the screen moves with the viewer (window parallax)',
+        b1 > b0 + 1e-4, `eye x: 0 → +12 cm   NDC x: ${b0.toFixed(4)} → ${b1.toFixed(4)}`);
+
+  const f0 = project({ x: 0,  y: 0, z: 60 }, front).x;
+  const f1 = project({ x: 12, y: 0, z: 60 }, front).x;
+  check('object IN FRONT of the screen moves against the viewer',
+        f1 < f0 - 1e-4, `eye x: 0 → +12 cm   NDC x: ${f0.toFixed(4)} → ${f1.toFixed(4)}`);
+
+  const v0 = project({ x: 0, y: 0,  z: 60 }, behind).y;
+  const v1 = project({ x: 0, y: 10, z: 60 }, behind).y;
+  check('vertical parallax has the same sense as horizontal',
+        v1 > v0 + 1e-4, `eye y: 0 → +10 cm   NDC y: ${v0.toFixed(4)} → ${v1.toFixed(4)}`);
+}
+
+{
+  // Moving right should reveal the LEFT face of a box sitting behind the glass
+  // (its left is the viewer's right, since it faces the viewer). This is the
+  // user-visible statement of the whole feature.
+  const boxLeftFaceCentre  = [ 6, 0, -40];   // +X side  = the object's left
+  const boxRightFaceCentre = [-6, 0, -40];   // -X side  = the object's right
+
+  const eyeL = { x: -25, y: 0, z: 60 };
+  const eyeR = { x:  25, y: 0, z: 60 };
+
+  // A face is "visible" when the vector from the eye to it has a negative dot
+  // product with the face's outward normal.
+  const sees = (eye, p, normal) => {
+    const d = [p[0] - eye.x, p[1] - eye.y, p[2] - eye.z];
+    return d[0] * normal[0] + d[1] * normal[1] + d[2] * normal[2] < 0;
+  };
+
+  check("moving RIGHT reveals the model's LEFT side",
+        sees(eyeR, boxLeftFaceCentre, [1, 0, 0]) && !sees(eyeR, boxRightFaceCentre, [-1, 0, 0]),
+        'eye at x = +25 cm sees the +X (model-left) face only');
+
+  check("moving LEFT reveals the model's RIGHT side",
+        sees(eyeL, boxRightFaceCentre, [-1, 0, 0]) && !sees(eyeL, boxLeftFaceCentre, [1, 0, 0]),
+        'eye at x = −25 cm sees the −X (model-right) face only');
+}
+
+/* ====================================================== 3. COUNTER-ROTATION */
+section('3 · Counter-rotation — the model turns opposite to your head');
+
+{
+  // Reimplements HologramScene._counterRotation so the sign convention can be
+  // asserted without standing up a WebGL context.
+  const FORWARD = new THREE.Vector3(0, 0, 1);
+  function counterRotation(eye, gain = 1, verticalGain = 1) {
+    const q = new THREE.Quaternion();
+    if (gain === 0) return q;
+    const dir = new THREE.Vector3(eye.x, eye.y * verticalGain, Math.max(eye.z, 1e-3)).normalize();
+    const base = new THREE.Quaternion().setFromUnitVectors(dir, FORWARD);
+    const w = Math.min(Math.max(base.w, -1), 1);
+    const sinHalf = Math.sqrt(Math.max(1 - w * w, 0));
+    if (sinHalf < 1e-6) return q;
+    const axis = new THREE.Vector3(base.x / sinHalf, base.y / sinHalf, base.z / sinHalf);
+    return q.setFromAxisAngle(axis, 2 * Math.acos(w) * gain);
+  }
+
+  const yawOf = (q) => new THREE.Euler().setFromQuaternion(q, 'YXZ').y;
+  const deg = (r) => (r * 180 / Math.PI).toFixed(2) + '°';
+
+  // "Rotates to its left" = its forward vector (+Z) swings towards +X, which is
+  // a POSITIVE rotation about Y. The user asked for: move left → model rotates
+  // to its left → its right side comes towards you.
+  const qLeft  = counterRotation({ x: -20, y: 0, z: 60 });
+  const qRight = counterRotation({ x:  20, y: 0, z: 60 });
+
+  check('viewer moves LEFT  → model yaws to its own LEFT  (+Y rotation)',
+        yawOf(qLeft) > 0.01, `yaw = ${deg(yawOf(qLeft))}`);
+  check('viewer moves RIGHT → model yaws to its own RIGHT (−Y rotation)',
+        yawOf(qRight) < -0.01, `yaw = ${deg(yawOf(qRight))}`);
+
+  // The rotation must exactly cancel the viewer's angular displacement at
+  // gain 1 — that is what makes gain 1 the "physically honest" setting.
+  const theta = Math.atan2(20, 60);
+  check('at gain 1 the rotation exactly cancels the viewing angle',
+        near(Math.abs(yawOf(qRight)), theta, 1e-6),
+        `viewing angle ${deg(theta)} vs. applied ${deg(Math.abs(yawOf(qRight)))}`);
+
+  const q2 = counterRotation({ x: 20, y: 0, z: 60 }, 2);
+  check('gain 2 doubles the rotation angle',
+        near(Math.abs(yawOf(q2)), 2 * theta, 1e-6),
+        `${deg(Math.abs(yawOf(q2)))} = 2 × ${deg(theta)}`);
+
+  check('gain 0 produces no rotation',
+        counterRotation({ x: 20, y: 0, z: 60 }, 0).equals(new THREE.Quaternion()));
+
+  check('dead-centre viewer produces no rotation',
+        Math.abs(yawOf(counterRotation({ x: 0, y: 0, z: 60 }))) < 1e-9);
+
+  // Moving up should tip the model's top towards you (+X rotation).
+  const pitchOf = (q) => new THREE.Euler().setFromQuaternion(q, 'YXZ').x;
+  const qUp = counterRotation({ x: 0, y: 15, z: 60 });
+  check('viewer moves UP → model tips its top towards the viewer (+X rotation)',
+        pitchOf(qUp) > 0.01, `pitch = ${deg(pitchOf(qUp))}`);
+
+  const qFlat = counterRotation({ x: 0, y: 15, z: 60 }, 1, 0);
+  check('vertical influence 0 removes the pitch but keeps yaw available',
+        Math.abs(pitchOf(qFlat)) < 1e-9);
+
+  // Cross-check against the projection: the side the counter-rotation brings
+  // into view must be the same side the off-axis camera actually sees.
+  const dirRight = new THREE.Vector3(20, 0, 60).normalize();
+  const brought = dirRight.clone().applyQuaternion(counterRotation({ x: 20, y: 0, z: 60 }));
+  check('counter-rotation and off-axis projection agree on which side shows',
+        brought.angleTo(FORWARD) < 1e-6,
+        'the surface facing the real eye is rotated onto the +Z axis');
+}
+
+/* ================================================== 4. EYE POSITION FROM LM */
+section('4 · Landmarks → real-world eye position');
+
+{
+  const vw = 1280, vh = 720;
+  const cfg = { camFovDeg: 62, ipdCm: 6.3 };
+
+  /** Build a minimal 478-landmark array with the two irises placed by hand. */
+  function fakeLandmarks(cxPx, cyPx, sepPx) {
+    const lm = new Array(478).fill(null).map(() => ({ x: 0.5, y: 0.5, z: 0 }));
+    lm[468] = { x: (cxPx - sepPx / 2) / vw, y: cyPx / vh, z: 0 };
+    lm[473] = { x: (cxPx + sepPx / 2) / vw, y: cyPx / vh, z: 0 };
+    return lm;
+  }
+
+  const f = (vw / 2) / Math.tan((cfg.camFovDeg * Math.PI / 180) / 2);
+  const sep = 120;
+  const expectedZ = f * cfg.ipdCm / sep;
+
+  const centre = eyeFromLandmarks(fakeLandmarks(vw / 2, vh / 2, sep), vw, vh, cfg);
+  check('a centred face gives x ≈ 0, y ≈ 0',
+        near(centre.x, 0, 1e-9) && near(centre.y, 0, 1e-9),
+        `x=${centre.x.toFixed(6)}  y=${centre.y.toFixed(6)}`);
+  check('depth comes from apparent interpupillary distance',
+        near(centre.z, expectedZ, 1e-9),
+        `${centre.z.toFixed(2)} cm at ${sep}px IPD (f = ${f.toFixed(1)}px)`);
+
+  // The raw webcam image is NOT mirrored, so the user's own right is the
+  // image's left. This single sign flip decides whether the illusion works or
+  // inverts, so it gets its own test.
+  const imageLeft = eyeFromLandmarks(fakeLandmarks(vw * 0.25, vh / 2, sep), vw, vh, cfg);
+  check('face on the LEFT of the raw image → viewer has moved to their RIGHT (+X)',
+        imageLeft.x > 1, `world x = +${imageLeft.x.toFixed(2)} cm`);
+
+  const imageRight = eyeFromLandmarks(fakeLandmarks(vw * 0.75, vh / 2, sep), vw, vh, cfg);
+  check('face on the RIGHT of the raw image → viewer has moved to their LEFT (−X)',
+        imageRight.x < -1, `world x = ${imageRight.x.toFixed(2)} cm`);
+  check('the two are mirror images of each other',
+        near(imageLeft.x, -imageRight.x, 1e-9));
+
+  const imageTop = eyeFromLandmarks(fakeLandmarks(vw / 2, vh * 0.25, sep), vw, vh, cfg);
+  check('face high in the image → viewer has moved UP (+Y)',
+        imageTop.y > 1, `world y = +${imageTop.y.toFixed(2)} cm`);
+
+  const closer = eyeFromLandmarks(fakeLandmarks(vw / 2, vh / 2, sep * 2), vw, vh, cfg);
+  check('a wider pupil separation means the viewer is closer',
+        near(closer.z, expectedZ / 2, 1e-9),
+        `${expectedZ.toFixed(1)} cm → ${closer.z.toFixed(1)} cm when the IPD doubles`);
+
+  check('too few landmarks are rejected rather than guessed at',
+        eyeFromLandmarks(new Array(10).fill({ x: 0, y: 0 }), vw, vh, cfg) === null);
+  check('a degenerate (zero-width) face is rejected',
+        eyeFromLandmarks(fakeLandmarks(vw / 2, vh / 2, 0), vw, vh, cfg) === null);
+}
+
+/* ==================================================== 5. CAMERA/SCREEN OFFSET */
+section('5 · Webcam-to-canvas offset chain');
+
+{
+  const layout = {
+    screenHeightCm: 30, canvasCentreXCm: 0, canvasCentreYCm: 0,
+    cameraOffset: { x: 0, y: 16 },
+  };
+  const eyeCam = { x: 0, y: 0, z: 60 };
+
+  const auto = eyeToCanvasSpace(eyeCam, layout,
+    { camOffsetAuto: true, camOffsetXCm: 0, camOffsetYCm: 0, recenterX: 0, recenterY: 0 });
+  check('a webcam above the panel puts a camera-centred face above canvas centre',
+        near(auto.y, 16), `y = ${auto.y} cm (half of 30 cm + 1 cm bezel)`);
+
+  const manual = eyeToCanvasSpace(eyeCam, layout,
+    { camOffsetAuto: false, camOffsetXCm: 3, camOffsetYCm: -5, recenterX: 0, recenterY: 0 });
+  check('manual webcam offsets are applied verbatim',
+        near(manual.x, 3) && near(manual.y, -5), `x = ${manual.x}, y = ${manual.y}`);
+
+  const off = eyeToCanvasSpace(eyeCam, { ...layout, canvasCentreXCm: 8 },
+    { camOffsetAuto: false, camOffsetXCm: 0, camOffsetYCm: 0, recenterX: 0, recenterY: 0 });
+  check('a window sitting right-of-centre shifts the eye left in canvas space',
+        near(off.x, -8), `x = ${off.x} cm`);
+
+  const rec = eyeToCanvasSpace({ x: 10, y: 4, z: 60 }, layout,
+    { camOffsetAuto: false, camOffsetXCm: 0, camOffsetYCm: 0, recenterX: 10, recenterY: 4 });
+  check('recentring cancels the captured offset exactly',
+        near(rec.x, 0) && near(rec.y, 0));
+
+  const tooClose = eyeToCanvasSpace({ x: 0, y: 0, z: 0.2 }, layout,
+    { camOffsetAuto: false, camOffsetXCm: 0, camOffsetYCm: 0, recenterX: 0, recenterY: 0 });
+  check('depth is clamped so the frustum can never divide by ~zero',
+        tooClose.z >= 5, `z clamped to ${tooClose.z}`);
+}
+
+/* ================================================================ 6. FILTER */
+section('6 · 1€ filter');
+
+{
+  const f = new OneEuroFilter(1.2, 0.01);
+  check('first sample passes through untouched', near(f.filter(10, 1 / 30), 10));
+
+  // Held steady with noise, the output should settle near the true value.
+  const g = new OneEuroFilter(1.2, 0.01);
+  let v = 0;
+  for (let i = 0; i < 400; i++) v = g.filter(50 + (i % 2 ? 0.9 : -0.9), 1 / 30);
+  check('sensor jitter is suppressed when the head is still',
+        Math.abs(v - 50) < 0.35, `settled at ${v.toFixed(3)} against ±0.9 noise`);
+
+  // Under a sustained move it must actually keep up, not lag forever.
+  const h = new OneEuroFilter(1.2, 0.01);
+  let last = 0;
+  for (let i = 0; i < 120; i++) last = h.filter(i * 0.5, 1 / 30);
+  const target = 119 * 0.5;
+  check('the filter tracks sustained motion instead of lagging behind',
+        Math.abs(last - target) < target * 0.15,
+        `output ${last.toFixed(1)} vs. input ${target.toFixed(1)}`);
+
+  const z = new OneEuroFilter(1.2, 0.01);
+  check('a zero/NaN timestep does not produce NaN',
+        Number.isFinite(z.filter(5, 0)) && Number.isFinite(z.filter(6, NaN)));
+}
+
+/* ============================================================== 7. HEAD POSE */
+section('7 · Head pose matrix decoding');
+
+{
+  const yaw30 = new THREE.Matrix4().makeRotationY(30 * Math.PI / 180);
+  const a = headAnglesFromMatrix(THREE, yaw30.toArray(), {});
+  check('a yaw-only matrix decodes to yaw only',
+        Math.abs(Math.abs(a.yaw) - 30) < 1e-4 && Math.abs(a.pitch) < 1e-4 && Math.abs(a.roll) < 1e-4,
+        `yaw=${a.yaw.toFixed(2)}° pitch=${a.pitch.toFixed(2)}° roll=${a.roll.toFixed(2)}°`);
+
+  const pitch20 = new THREE.Matrix4().makeRotationX(20 * Math.PI / 180);
+  const b = headAnglesFromMatrix(THREE, pitch20.toArray(), {});
+  check('a pitch-only matrix decodes to pitch only',
+        Math.abs(b.pitch - 20) < 1e-4 && Math.abs(b.yaw) < 1e-4,
+        `yaw=${b.yaw.toFixed(2)}° pitch=${b.pitch.toFixed(2)}°`);
+
+  check('malformed pose data is rejected', headAnglesFromMatrix(THREE, [1, 2, 3], {}) === null);
+}
+
+
+/* ========================================================= 8. MOBILE / DEVICE */
+section('8 · Mobile — orientation, focal length, budgets');
+
+{
+  // A phone's front camera is bonded to the top of the display in its natural
+  // orientation. Rotate the phone and the camera physically moves to the side,
+  // which shifts the whole offset chain by half a screen width.
+  const W = 7, H = 15;      // a phone, portrait, in cm
+  const bezel = 0.5;
+
+  const portrait = cameraOffsetForOrientation(W, H, bezel, 0);
+  check('portrait: camera sits above the display centre',
+        near(portrait.x, 0, 1e-9) && near(portrait.y, H / 2 + bezel, 1e-9),
+        `(${portrait.x.toFixed(2)}, ${portrait.y.toFixed(2)}) cm`);
+
+  // Rotated 90°, `screen.width/height` swap, so the caller passes H×W.
+  const land90 = cameraOffsetForOrientation(H, W, bezel, 90);
+  check('rotated 90°: camera moves to the LEFT edge',
+        near(land90.y, 0, 1e-9) && land90.x < 0,
+        `(${land90.x.toFixed(2)}, ${land90.y.toFixed(2)}) cm`);
+  check('rotated 90°: the distance is half the NATURAL height, not the new one',
+        near(Math.abs(land90.x), H / 2 + bezel, 1e-9),
+        `${Math.abs(land90.x).toFixed(2)} cm = ${H}/2 + ${bezel}`);
+
+  const land270 = cameraOffsetForOrientation(H, W, bezel, 270);
+  check('rotated 270°: camera moves to the RIGHT edge',
+        near(land270.y, 0, 1e-9) && land270.x > 0,
+        `(${land270.x.toFixed(2)}, ${land270.y.toFixed(2)}) cm`);
+  check('90° and 270° are exact mirrors', near(land90.x, -land270.x, 1e-9));
+
+  const upside = cameraOffsetForOrientation(W, H, bezel, 180);
+  check('rotated 180°: camera ends up below the display centre',
+        near(upside.x, 0, 1e-9) && near(upside.y, -(H / 2 + bezel), 1e-9),
+        `(${upside.x.toFixed(2)}, ${upside.y.toFixed(2)}) cm`);
+
+  // A desktop is always angle 0, so this must reduce to the old behaviour.
+  const desktop = cameraOffsetForOrientation(53, 30, 1.0, 0);
+  check('desktop (angle 0) reduces to the original "webcam above the monitor"',
+        near(desktop.x, 0, 1e-9) && near(desktop.y, 16, 1e-9),
+        `(${desktop.x.toFixed(2)}, ${desktop.y.toFixed(2)}) cm`);
+}
+
+{
+  // The same phone sensor gives 1280×720 in landscape and 720×1280 in portrait.
+  // Anchoring focal length to image WIDTH would halve it on rotation and report
+  // the viewer at twice their true distance.
+  const cfg = { camFovDeg: 62, ipdCm: 6.3 };
+
+  function irisPair(vw, vh, sepPx) {
+    const lm = new Array(478).fill(null).map(() => ({ x: 0.5, y: 0.5, z: 0 }));
+    lm[468] = { x: (vw / 2 - sepPx / 2) / vw, y: 0.5, z: 0 };
+    lm[473] = { x: (vw / 2 + sepPx / 2) / vw, y: 0.5, z: 0 };
+    return lm;
+  }
+
+  const sep = 120;
+  const landscape = eyeFromLandmarks(irisPair(1280, 720, sep), 1280, 720, cfg);
+  const portrait  = eyeFromLandmarks(irisPair(720, 1280, sep), 720, 1280, cfg);
+
+  check('the same face at the same pixel size reports the same depth in either orientation',
+        near(landscape.z, portrait.z, 1e-9),
+        `landscape ${landscape.z.toFixed(2)} cm  ·  portrait ${portrait.z.toFixed(2)} cm`);
+
+  check('depth is derived from the LONG image axis',
+        near(landscape.z, ((1280 / 2) / Math.tan(31 * Math.PI / 180)) * 6.3 / sep, 1e-9));
+}
+
+{
+  const phone = defaultsForClass('phone');
+  const desktop = defaultsForClass('desktop');
+  check('a phone gets a phone-sized display, not a 24-inch one',
+        phone.screenDiagonalInches < 8 && desktop.screenDiagonalInches > 20,
+        `phone ${phone.screenDiagonalInches}"  ·  desktop ${desktop.screenDiagonalInches}"`);
+  check('shadows are off by default on a phone', phone.shadows === false && desktop.shadows === true);
+
+  const pb = renderBudgetForClass('phone');
+  const db = renderBudgetForClass('desktop');
+  check('a phone gets a lower pixel-ratio ceiling and a smaller shadow map',
+        pb.maxPixelRatio < db.maxPixelRatio && pb.shadowMapSize < db.shadowMapSize,
+        `phone ${pb.maxPixelRatio}× / ${pb.shadowMapSize}px  ·  desktop ${db.maxPixelRatio}× / ${db.shadowMapSize}px`);
+}
+
+
+{
+  // Regression guard. Every per-device default has to survive being written to
+  // localStorage and validated on the way back in. When a default sits outside
+  // the accepted range the failure is invisible on first run and only appears on
+  // the NEXT load, as a silent revert to the desktop value — which is exactly
+  // how a phone ended up claiming a 24-inch display.
+  const violations = [];
+  for (const cls of ['phone', 'tablet', 'desktop']) {
+    for (const [key, value] of Object.entries(defaultsForClass(cls))) {
+      const range = RANGES[key];
+      if (typeof value !== 'number' || !range) continue;
+      if (value < range[0] || value > range[1]) {
+        violations.push(`${cls}.${key}=${value} outside [${range[0]}, ${range[1]}]`);
+      }
+    }
+  }
+  check('every device default survives config range validation',
+        violations.length === 0,
+        violations.length ? violations.join('; ') : 'phone / tablet / desktop all in range');
+
+  // The same trap applies to the shipped defaults themselves.
+  const badDefaults = Object.entries(RANGES)
+    .filter(([k, r]) => typeof DEFAULTS[k] === 'number' && (DEFAULTS[k] < r[0] || DEFAULTS[k] > r[1]))
+    .map(([k, r]) => `${k}=${DEFAULTS[k]} outside [${r[0]}, ${r[1]}]`);
+  check('every shipped default is inside its own validated range',
+        badDefaults.length === 0, badDefaults.join('; ') || `${Object.keys(RANGES).length} ranges checked`);
+
+  check('the diagonal range actually reaches phone sizes',
+        RANGES.screenDiagonalInches[0] <= 5,
+        `min ${RANGES.screenDiagonalInches[0]}" — a 6.1" phone must round-trip`);
+}
+
+/* ================================================================= SUMMARY */
+const sum = document.getElementById('sum');
+sum.className = fail === 0 ? 'ok' : 'bad';
+sum.textContent = fail === 0
+  ? `✓ all ${pass} assertions passed`
+  : `✕ ${fail} of ${pass + fail} assertions failed`;
+window.__results = { pass, fail };
+</script>
+</body>
+</html>
