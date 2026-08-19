@@ -7,7 +7,10 @@ MediaPipe Face Mesh tracks your eyes in real space; the scene is then rendered w
 against your movement — move to your left and its right side swings toward you — so it reads
 as a physical object sitting in the space around your screen rather than a picture on it.
 
-Everything runs locally in the browser. No video ever leaves your device.
+Everything runs locally in the browser. No video ever leaves your device, and after the
+first load there are **no network requests at all** — every dependency is vendored.
+
+### ▶ [Try it live](https://rmanmetaverse.github.io/Cam2Hologram-Window-into-3D-reality-/)
 
 ![HeadTracking Hologram3D running on a desktop, viewed from the left](docs/screenshot.jpg)
 
@@ -21,7 +24,9 @@ Everything runs locally in the browser. No video ever leaves your device.
 ## Contents
 
 - [Running it](#running-it)
+- [Offline by default](#offline-by-default)
 - [On a phone](#on-a-phone)
+- [Deploying to GitHub Pages](#deploying-to-github-pages)
 - [How it works](#how-it-works)
 - [Calibration](#calibration)
 - [Loading your own model](#loading-your-own-model)
@@ -48,8 +53,49 @@ npx http-server . -p 8000 -c-1     # if you would rather use Node
 
 Then click **Enable camera & start** and allow camera access.
 
+No build step, no `npm install`, and **no internet connection required** — clone, serve,
+run. See [Offline by default](#offline-by-default).
+
 **Close one eye.** The illusion is monocular — with both eyes open, your stereo vision
 correctly reports that the screen is flat, and fights the effect.
+
+---
+
+## Offline by default
+
+Every third-party dependency is committed under [`vendor/`](vendor/) (~28 MB). A fresh clone
+on a machine with no network runs identically to one online:
+
+| | Version | Size |
+|---|---|---|
+| three.js core + the four addons this app imports | 0.170.0 | ~1.5 MB |
+| DRACO decoder + Basis/KTX2 transcoder | from three.js | ~1.3 MB |
+| MediaPipe `tasks-vision` runtime (SIMD + no-SIMD wasm) | 1.0.1 | ~23 MB |
+| `face_landmarker.task` model | float16/1 | 3.6 MB |
+
+Regenerate or verify the tree with:
+
+```bash
+node tools/vendor.mjs           # repopulate vendor/ from npm + Google's model host
+node tools/vendor.mjs --check   # verify completeness, exit 1 if anything is missing
+```
+
+`tools/vendor.mjs` resolves the three.js addon import graph automatically rather than
+trusting a hand-written file list — the addons import each other by relative path, and that
+graph shifts between releases, so a hand-copied tree works right up until the day it quietly
+doesn't. It also trims what is provably unused: MediaPipe's 12 MB `_module_` wasm pair (only
+requested when you ask `forVisionTasks` for the module build, which this app never does) and
+the DRACO *encoder* (~1 MB, never touched by a loader).
+
+The no-SIMD wasm **is** kept — it is the fallback for iOS Safari before 16.4, which is
+exactly the old-phone case this app cares about.
+
+CDN URLs still appear in `js/tracker.js` as a **fallback only**. They are never reached in a
+healthy install; they exist so a checkout with a damaged `vendor/` still starts instead of
+dying at the splash screen, and it logs a warning telling you to re-run the vendor script.
+
+> Verified by loading the app with the browser's network log open: all 35 requests resolve to
+> the local origin, including the MediaPipe wasm and the landmark model.
 
 ---
 
@@ -106,6 +152,50 @@ Beyond that, three mobile-specific things happen:
 
 iOS has no Fullscreen API on iPhone. Use **Share → Add to Home Screen** and launch from
 there; the app ships the meta tags for a fullscreen standalone shell.
+
+---
+
+## Deploying to GitHub Pages
+
+Pages serves over **HTTPS**, which is a secure context — so the camera works on phones with
+no certificate warnings and no LAN tunnelling. It is the easiest way to use this on a phone.
+
+This repo is already deployed:
+**https://rmanmetaverse.github.io/Cam2Hologram-Window-into-3D-reality-/**
+
+There is no build step. The site is the repository root, served as-is.
+
+### Enabling it on your own fork
+
+**Via the web UI** — *Settings → Pages → Build and deployment*, set **Source** to
+*Deploy from a branch*, branch `main`, folder `/ (root)`, then **Save**. First publish takes
+a minute or two.
+
+**Via the CLI:**
+
+```bash
+gh api -X POST repos/OWNER/REPO/pages   -f "source[branch]=main" -f "source[path]=/"
+
+gh api repos/OWNER/REPO/pages --jq '.status, .html_url'   # check progress
+```
+
+### Why it works unmodified
+
+- **`.nojekyll`** is committed. Without it, Pages runs the files through Jekyll, which
+  silently drops paths beginning with `_` and adds build latency for nothing.
+- **Every path is relative.** The app is served from `/REPO-NAME/`, not a domain root, so any
+  absolute `/js/...` path would 404. Runtime asset URLs (the DRACO and Basis decoders, the
+  MediaPipe wasm and model) are resolved against `import.meta.url` rather than the document,
+  so they stay correct at any depth.
+- **The MediaPipe bundle is vendored as `.js`, not `.mjs`.** Some static hosts serve `.mjs`
+  with a MIME type browsers reject for modules, which would kill the module load outright.
+  The content is byte-identical; only the extension changes.
+
+### Size
+
+The published site is roughly 78 MB — 29 MB of vendored runtime plus 48 MB for the bundled
+Angel model. Well inside the 1 GB Pages limit, but if you want a lean deploy, swap the model
+for a compressed `.glb`; the app falls back to a built-in procedural object if none loads.
 
 ---
 
@@ -290,8 +380,11 @@ js/
 tests/
   test.html           geometry test suite
   mobile.html         responsive preview harness
+tools/vendor.mjs      vendors all third-party deps into vendor/
+vendor/               committed dependencies — three.js, MediaPipe, decoders, model
 serve.py, start.bat   local static server, with --https for phones
 models/               bundled default model
+.nojekyll             tells GitHub Pages to serve the tree as-is
 ```
 
 ---
@@ -311,6 +404,8 @@ first run (with fallback hosts) and are then browser-cached; the rest is local.
 | Jittery | Lower **Smoothing — jitter**. Laggy: raise **Smoothing — lag**. |
 | Low frame rate | Turn off **Shadows** and **Parallax reference props**; a 300k-triangle model is the usual cause. |
 | Settings in a strange state | **Reset settings** in the panel. Out-of-range persisted values are also dropped automatically on load. |
+| Console warns "vendor/ is missing or incomplete" | Run `node tools/vendor.mjs`. The app fell back to a CDN and is no longer offline-capable. |
+| Blank page on GitHub Pages | Confirm `.nojekyll` is committed and Pages is serving `/ (root)` of `main`. |
 
 ---
 

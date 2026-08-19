@@ -1,19 +1,29 @@
 /**
  * Webcam capture + MediaPipe FaceLandmarker.
  *
- * Loading strategy: `@mediapipe/tasks-vision` is pulled as an ES module from a
- * CDN, with a fallback chain because a single pinned host/version is a single
- * point of failure for an app that is otherwise entirely local.
+ * Loading strategy: LOCAL FIRST, then CDNs.
+ *
+ * The vendored copy under `vendor/` is authoritative — a fresh clone runs with
+ * no network at all. The CDN entries exist only so a checkout with a missing or
+ * partial `vendor/` still starts instead of dying at the splash screen; they are
+ * never reached in a healthy install. `import.meta.url` anchors the local paths,
+ * so this resolves correctly whether the app is served from a domain root or
+ * from a GitHub Pages sub-path.
  */
 
+const LOCAL_BASE = new URL('../vendor/', import.meta.url).href;
+
+/** Each entry supplies the module URL and the directory holding its wasm. */
 const BUNDLE_SOURCES = [
-  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1',
-  'https://unpkg.com/@mediapipe/tasks-vision@1.0.1',
-  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35',
-  'https://unpkg.com/@mediapipe/tasks-vision@0.10.35',
+  { label: 'local',    module: `${LOCAL_BASE}mediapipe/vision_bundle.js`, wasm: `${LOCAL_BASE}mediapipe/wasm` },
+  { label: 'jsdelivr', module: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs',
+                       wasm:   'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm' },
+  { label: 'unpkg',    module: 'https://unpkg.com/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs',
+                       wasm:   'https://unpkg.com/@mediapipe/tasks-vision@1.0.1/wasm' },
 ];
 
 const MODEL_SOURCES = [
+  `${LOCAL_BASE}models/face_landmarker.task`,
   'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
   'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task',
 ];
@@ -25,13 +35,17 @@ let wasmBase = '';
 async function loadVisionBundle(onStatus) {
   if (visionModule) return visionModule;
   let lastErr;
-  for (const base of BUNDLE_SOURCES) {
+  for (const source of BUNDLE_SOURCES) {
     try {
-      onStatus?.(`loading vision runtime… (${new URL(base).host})`);
-      const mod = await import(/* @vite-ignore */ `${base}/vision_bundle.mjs`);
+      onStatus?.(`loading vision runtime… (${source.label})`);
+      const mod = await import(/* @vite-ignore */ source.module);
       if (!mod?.FaceLandmarker) throw new Error('bundle missing FaceLandmarker');
       visionModule = mod;
-      wasmBase = `${base}/wasm`;
+      wasmBase = source.wasm;
+      if (source.label !== 'local') {
+        console.warn('[Hologram3D] vendor/ is missing or incomplete — fell back to ' +
+                     `${source.label}. Run: node tools/vendor.mjs`);
+      }
       return mod;
     } catch (err) {
       lastErr = err;

@@ -28,8 +28,13 @@ import { applyOffAxisProjection } from './geometry.js';
 import { DepthBox, WindowFrame, ParallaxProps, buildFallbackModel, disposeChildren } from './stagecraft.js';
 import { damp, clamp } from './filters.js';
 
-const DRACO_PATH = 'https://www.gstatic.com/draco/versioned/decoders/1.5.7/';
-const KTX2_PATH = 'https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/basis/';
+// Vendored decoders. These are fetched at runtime rather than imported, so they
+// are plain URLs — and anchoring them to `import.meta.url` rather than to the
+// document keeps them correct no matter which page loads this module or how
+// deep it sits, including under a GitHub Pages sub-path.
+const VENDOR = new URL('../vendor/', import.meta.url).href;
+const DRACO_PATH = `${VENDOR}three/examples/jsm/libs/draco/gltf/`;
+const KTX2_PATH = `${VENDOR}three/examples/jsm/libs/basis/`;
 
 const NEAR_CM = 1;
 const FAR_CM = 4000;
